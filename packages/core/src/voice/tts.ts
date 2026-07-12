@@ -6,7 +6,14 @@
 
 import type { TTSPlayer } from "./index";
 import { base64ToInt16 } from "./base64";
-import { fetchVoiceToken, gradiumWsUrl, type VoiceTransport } from "./token";
+import {
+  fetchVoiceToken,
+  gradiumWsUrl,
+  openVoiceSocket,
+  type VoiceSocket,
+  type VoiceSocketFactory,
+  type VoiceTransport,
+} from "./token";
 
 const VOICE_ID = "YTpq7expH9539ERJ";
 const SAMPLE_RATE = 48_000;
@@ -20,7 +27,7 @@ type TTSServerMessage =
   | { type: "error"; message?: string };
 
 interface Utterance {
-  ws: WebSocket | null;
+  ws: VoiceSocket | null;
   sources: Set<AudioBufferSourceNode>;
   /** Running playback cursor (AudioContext time) for gapless scheduling. */
   cursor: number;
@@ -30,7 +37,11 @@ interface Utterance {
   resolve: () => void;
 }
 
-export function createTTS(endpoint: string, transport?: VoiceTransport): TTSPlayer {
+export function createTTS(
+  endpoint: string,
+  transport?: VoiceTransport,
+  socketFactory?: VoiceSocketFactory,
+): TTSPlayer {
   // Preferably created by unlock() on a user gesture; lazily on first speak()
   // otherwise (which Chrome's autoplay policy leaves suspended off-gesture).
   let ctx: AudioContext | null = null;
@@ -59,9 +70,7 @@ export function createTTS(endpoint: string, transport?: VoiceTransport): TTSPlay
       }
     }
     utt.sources.clear();
-    if (utt.ws && utt.ws.readyState <= WebSocket.OPEN) {
-      utt.ws.close();
-    }
+    utt.ws?.close();
     if (active === utt) active = null;
     utt.resolve();
   }
@@ -120,81 +129,86 @@ export function createTTS(endpoint: string, transport?: VoiceTransport): TTSPlay
         active = utt;
 
         void (async () => {
-          let ws: WebSocket;
-          try {
-            // Tokens are single-use: fetch a fresh one per connect. The token
-            // request goes through `transport` (extension bridge) under strict
-            // CSP; the WS below still connects directly from the page — WS can't
-            // route through the fetch bridge, so it is best-effort under a strict
-            // connect-src, but the token fetch (the reported failure) now works.
-            const token = await fetchVoiceToken(endpoint, transport);
+          // The server frame handlers close over `ws`, which only exists after
+          // the await below; `utt.ws` is the stable reference they use instead.
+          const onServerMessage = (data: string): void => {
             if (utt.settled) return;
-            ws = new WebSocket(gradiumWsUrl("tts", token));
-          } catch (err) {
-            console.warn("[voice/tts] failed to start:", err);
-            settle(utt);
-            return;
-          }
-          utt.ws = ws;
-          if (utt.settled) {
-            ws.close();
-            return;
-          }
-
-          ws.onopen = () => {
-            ws.send(
-              JSON.stringify({
-                type: "setup",
-                voice_id: VOICE_ID,
-                model_name: "default",
-                output_format: "pcm",
-              }),
-            );
-          };
-
-          ws.onmessage = (ev: MessageEvent) => {
-            if (utt.settled || typeof ev.data !== "string") return;
             let msg: TTSServerMessage;
             try {
-              msg = JSON.parse(ev.data) as TTSServerMessage;
+              msg = JSON.parse(data) as TTSServerMessage;
             } catch {
               return;
             }
             switch (msg.type) {
               case "ready":
-                ws.send(JSON.stringify({ type: "text", text }));
-                ws.send(JSON.stringify({ type: "end_of_stream" }));
+                utt.ws?.send(JSON.stringify({ type: "text", text }));
+                utt.ws?.send(JSON.stringify({ type: "end_of_stream" }));
                 break;
               case "audio":
                 schedule(utt, audioCtx, msg.audio);
                 break;
               case "end_of_stream":
                 utt.streamEnded = true;
-                ws.close();
+                utt.ws?.close();
                 maybeFinish(utt);
                 break;
               case "error":
-                console.warn("[voice/tts] server error frame:", msg.message ?? msg);
+                console.error("[voice/tts] server error frame:", msg.message ?? msg);
                 utt.streamEnded = true;
-                ws.close();
+                utt.ws?.close();
                 maybeFinish(utt);
                 break;
             }
           };
 
-          ws.onerror = () => {
-            console.warn("[voice/tts] websocket error");
-          };
-
-          ws.onclose = () => {
+          let ws: VoiceSocket;
+          try {
+            // Tokens are single-use: fetch a fresh one per connect. Both the
+            // token request (`transport`) and the socket (`socketFactory`) route
+            // through the extension bridge when present, so neither is subject to
+            // the host page's CSP `connect-src`.
+            const token = await fetchVoiceToken(endpoint, transport);
             if (utt.settled) return;
-            if (!utt.streamEnded) {
-              console.warn("[voice/tts] websocket closed mid-stream; playing what arrived");
-            }
-            // Let already-scheduled audio drain, then resolve.
-            utt.streamEnded = true;
-            maybeFinish(utt);
-          };
+            ws = await openVoiceSocket(
+              gradiumWsUrl("tts", token),
+              {
+                onMessage: onServerMessage,
+                onError: () => {
+                  console.warn("[voice/tts] websocket error");
+                },
+                onClose: () => {
+                  if (utt.settled) return;
+                  if (!utt.streamEnded) {
+                    console.warn("[voice/tts] websocket closed mid-stream; playing what arrived");
+                  }
+                  // Let already-scheduled audio drain, then resolve.
+                  utt.streamEnded = true;
+                  maybeFinish(utt);
+                },
+              },
+              socketFactory,
+            );
+          } catch (err) {
+            // Narration must never break the tour: log loudly, resolve quietly.
+            console.error("[voice/tts] failed to start:", err);
+            settle(utt);
+            return;
+          }
+          if (utt.settled) {
+            // A newer speak() (or stop()) landed while we were connecting.
+            ws.close();
+            return;
+          }
+          utt.ws = ws;
+
+          ws.send(
+            JSON.stringify({
+              type: "setup",
+              voice_id: VOICE_ID,
+              model_name: "default",
+              output_format: "pcm",
+            }),
+          );
         })();
       });
     },

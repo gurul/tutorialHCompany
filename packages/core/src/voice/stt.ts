@@ -7,7 +7,14 @@
 
 import type { STTCallbacks, STTSession } from "./index";
 import { int16ToBase64 } from "./base64";
-import { fetchVoiceToken, gradiumWsUrl, openSocket, type VoiceTransport } from "./token";
+import {
+  fetchVoiceToken,
+  gradiumWsUrl,
+  openVoiceSocket,
+  type VoiceSocket,
+  type VoiceSocketFactory,
+  type VoiceTransport,
+} from "./token";
 
 const TARGET_RATE = 24_000;
 const CHUNK_SAMPLES = 2_400; // 100ms at 24kHz
@@ -61,6 +68,13 @@ function createDownsampler(fromRate: number, toRate: number): (input: Float32Arr
 /**
  * Wire mic capture: AudioWorklet (inline module via Blob URL) with a
  * ScriptProcessor fallback. Returns a teardown function.
+ *
+ * The worklet is loaded from a blob: URL, which a host page whose CSP omits
+ * `blob:` from script-src/worker-src rejects — and `typeof AudioWorkletNode`
+ * is always "function" in Chrome, so feature detection alone never reaches the
+ * fallback. The addModule/AudioWorkletNode path is therefore wrapped: a CSP
+ * (or any other) rejection falls through to ScriptProcessor rather than
+ * killing the whole listen.
  */
 async function createCapture(
   ctx: AudioContext,
@@ -70,27 +84,31 @@ async function createCapture(
   const source = ctx.createMediaStreamSource(stream);
 
   if (typeof AudioWorkletNode === "function" && ctx.audioWorklet) {
-    const blobUrl = URL.createObjectURL(
-      new Blob([CAPTURE_WORKLET_SOURCE], { type: "text/javascript" }),
-    );
     try {
-      await ctx.audioWorklet.addModule(blobUrl);
-    } finally {
-      URL.revokeObjectURL(blobUrl);
+      const blobUrl = URL.createObjectURL(
+        new Blob([CAPTURE_WORKLET_SOURCE], { type: "text/javascript" }),
+      );
+      try {
+        await ctx.audioWorklet.addModule(blobUrl);
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+      const node = new AudioWorkletNode(ctx, "handyman-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+      });
+      node.port.onmessage = (ev: MessageEvent) => onSamples(ev.data as Float32Array);
+      source.connect(node);
+      return () => {
+        node.port.onmessage = null;
+        source.disconnect();
+      };
+    } catch (err) {
+      console.warn("[voice/stt] AudioWorklet unavailable (page CSP?); using ScriptProcessor:", err);
     }
-    const node = new AudioWorkletNode(ctx, "handyman-capture", {
-      numberOfInputs: 1,
-      numberOfOutputs: 0,
-    });
-    node.port.onmessage = (ev: MessageEvent) => onSamples(ev.data as Float32Array);
-    source.connect(node);
-    return () => {
-      node.port.onmessage = null;
-      source.disconnect();
-    };
   }
 
-  // Fallback: deprecated but universally supported.
+  // Fallback: deprecated but universally supported, and needs no blob: URL.
   const processor = ctx.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = (ev: AudioProcessingEvent) => {
     onSamples(ev.inputBuffer.getChannelData(0));
@@ -108,46 +126,106 @@ export async function startSTT(
   endpoint: string,
   opts: STTCallbacks,
   transport?: VoiceTransport,
+  socketFactory?: VoiceSocketFactory,
 ): Promise<STTSession> {
-  // Tokens are single-use: fetch a fresh one per connect. Routes through the
-  // extension bridge (`transport`) under strict CSP; the WS below still connects
-  // directly from the page (best-effort under strict connect-src).
+  // Tokens are single-use: fetch a fresh one per connect. Both the token fetch
+  // (`transport`) and the WS itself (`socketFactory`) route through the
+  // extension bridge when it is present, so neither is subject to the host
+  // page's CSP `connect-src`.
   const token = await fetchVoiceToken(endpoint, transport);
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
   let ctx: AudioContext | null = null;
-  let ws: WebSocket | null = null;
+  let socket: VoiceSocket | null = null;
   let stopCapture: (() => void) | null = null;
 
   let done = false;
+  let socketOpen = false;
   let transcript = "";
   let silenceMs = 0;
 
   function teardown(): void {
     if (done) return;
     done = true;
+    socketOpen = false;
     stopCapture?.();
     for (const track of stream.getTracks()) track.stop();
-    if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
+    socket?.close();
     if (ctx && ctx.state !== "closed") void ctx.close();
   }
 
   function finish(): void {
     if (done) return;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "end_of_stream" }));
+    if (socketOpen) {
+      socket?.send(JSON.stringify({ type: "end_of_stream" }));
     }
     const finalText = transcript.trim();
     teardown();
     opts.onFinal(finalText);
   }
 
+  function onServerMessage(data: string): void {
+    if (done) return;
+    let msg: ASRServerMessage;
+    try {
+      msg = JSON.parse(data) as ASRServerMessage;
+    } catch {
+      return;
+    }
+    switch (msg.type) {
+      case "text":
+        if (msg.text) {
+          transcript += msg.text;
+          opts.onPartial?.(transcript);
+        }
+        break;
+      case "step":
+        // Semantic VAD: one entry per 80ms of audio.
+        for (const entry of msg.vad ?? []) {
+          if (entry.inactivity_prob > VAD_INACTIVITY_THRESHOLD) {
+            silenceMs += VAD_STEP_MS;
+          } else {
+            silenceMs = 0;
+          }
+        }
+        if (silenceMs >= END_OF_UTTERANCE_MS && transcript.trim().length > 0) {
+          finish();
+        }
+        break;
+      case "error":
+        opts.onError?.(new Error(`[voice/stt] server error frame: ${msg.message ?? "unknown"}`));
+        teardown();
+        break;
+      case "end_of_stream":
+        // Server-initiated end: emit whatever we have.
+        finish();
+        break;
+    }
+  }
+
   try {
     ctx = new AudioContext();
     if (ctx.state === "suspended") void ctx.resume();
 
-    ws = await openSocket(gradiumWsUrl("asr", token));
-    ws.send(
+    socket = await openVoiceSocket(
+      gradiumWsUrl("asr", token),
+      {
+        onMessage: onServerMessage,
+        onError: () => {
+          console.warn("[voice/stt] websocket error");
+        },
+        onClose: () => {
+          if (done) return;
+          socketOpen = false;
+          opts.onError?.(new Error("[voice/stt] websocket closed unexpectedly"));
+          teardown();
+        },
+      },
+      socketFactory,
+    );
+    socketOpen = true;
+    const sock = socket;
+    sock.send(
       JSON.stringify({
         type: "setup",
         model_name: "default",
@@ -156,66 +234,18 @@ export async function startSTT(
       }),
     );
 
-    const socket = ws;
-    socket.onmessage = (ev: MessageEvent) => {
-      if (done || typeof ev.data !== "string") return;
-      let msg: ASRServerMessage;
-      try {
-        msg = JSON.parse(ev.data) as ASRServerMessage;
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case "text":
-          if (msg.text) {
-            transcript += msg.text;
-            opts.onPartial?.(transcript);
-          }
-          break;
-        case "step":
-          // Semantic VAD: one entry per 80ms of audio.
-          for (const entry of msg.vad ?? []) {
-            if (entry.inactivity_prob > VAD_INACTIVITY_THRESHOLD) {
-              silenceMs += VAD_STEP_MS;
-            } else {
-              silenceMs = 0;
-            }
-          }
-          if (silenceMs >= END_OF_UTTERANCE_MS && transcript.trim().length > 0) {
-            finish();
-          }
-          break;
-        case "error":
-          opts.onError?.(new Error(`[voice/stt] server error frame: ${msg.message ?? "unknown"}`));
-          teardown();
-          break;
-        case "end_of_stream":
-          // Server-initiated end: emit whatever we have.
-          finish();
-          break;
-      }
-    };
-    socket.onerror = () => {
-      console.warn("[voice/stt] websocket error");
-    };
-    socket.onclose = () => {
-      if (done) return;
-      opts.onError?.(new Error("[voice/stt] websocket closed unexpectedly"));
-      teardown();
-    };
-
     // Mic capture -> downsample -> PCM16 chunks of ~100ms -> WS.
     const downsample = createDownsampler(ctx.sampleRate, TARGET_RATE);
     const pending = new Int16Array(CHUNK_SAMPLES);
     let pendingLen = 0;
     stopCapture = await createCapture(ctx, stream, (samples) => {
-      if (done || socket.readyState !== WebSocket.OPEN) return;
+      if (done || !socketOpen) return;
       const resampled = downsample(samples);
       for (let i = 0; i < resampled.length; i++) {
         const v = Math.max(-1, Math.min(1, resampled[i] ?? 0));
         pending[pendingLen++] = (v * 32767) | 0;
         if (pendingLen === CHUNK_SAMPLES) {
-          socket.send(JSON.stringify({ type: "audio", audio: int16ToBase64(pending) }));
+          sock.send(JSON.stringify({ type: "audio", audio: int16ToBase64(pending) }));
           pendingLen = 0;
         }
       }

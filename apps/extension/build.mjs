@@ -132,6 +132,10 @@ async function run() {
 		target: 'chrome110',
 		platform: 'browser',
 		sourcemap: false,
+		// Build stamp: inject-main logs this once on init, so the console tells you
+		// WHICH bundle the page is actually running. A stale cached inject-main.js
+		// already cost us a debugging cycle once.
+		define: { __HANDYMAN_BUILD__: JSON.stringify(new Date().toISOString()) },
 		logLevel: 'info',
 	});
 

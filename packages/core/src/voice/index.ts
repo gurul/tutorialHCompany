@@ -24,6 +24,11 @@ export interface STTCallbacks {
   onError?(e: unknown): void;
 }
 
-export type { VoiceTransport } from "./token";
+export type {
+  VoiceSocket,
+  VoiceSocketFactory,
+  VoiceSocketHandlers,
+  VoiceTransport,
+} from "./token";
 export { createTTS } from "./tts";
 export { startSTT } from "./stt";

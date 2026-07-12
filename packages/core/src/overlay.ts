@@ -325,7 +325,12 @@ export function createOverlay(opts: {
 		// Unlike the look-don't-touch reference, our cutout is interactive:
 		// keys aimed at an editable target (user typing, agent act_write)
 		// must pass through. Only Escape stays global.
-		const t = e.target;
+		// Events crossing a shadow boundary are retargeted, so at this
+		// document-level listener e.target is the shadow HOST of whatever the
+		// user is really typing in, never the input itself — composedPath()[0]
+		// is the true origin. (Guarded: composedPath may be absent in tests.)
+		const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+		const t: EventTarget | null = path.length > 0 ? path[0]! : e.target;
 		const editable =
 			t instanceof HTMLElement &&
 			(t instanceof HTMLInputElement ||

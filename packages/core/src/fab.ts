@@ -175,14 +175,56 @@ export function createFab(opts: {
 		if (!open) input.focus();
 	});
 
-	panel.addEventListener('submit', (e) => {
-		e.preventDefault();
+	function submitAsk(): void {
 		const q = input.value.trim();
 		if (!q) return;
 		input.value = '';
 		closePanel();
 		opts.onAsk(q);
+	}
+
+	panel.addEventListener('submit', (e) => {
+		e.preventDefault();
+		submitAsk();
 	});
+
+	// Key events are retargeted as they cross the shadow boundary: by the time
+	// they reach host-page listeners, e.target is `root` (the host div), not our
+	// input. Sites guard their keyboard shortcuts with the near-universal
+	// `if (e.target.tagName === 'INPUT') return;`, that guard fails, and the page
+	// handles our typing as its own shortcuts — preventDefault()ing Enter (which
+	// cancels implicit form submission) or swallowing single letters. Capture on
+	// window runs before any document-level capture listener the page can
+	// register, so it is the earliest point at which we can stop that.
+	const KEY_EVENTS = ['keydown', 'keypress', 'keyup'] as const;
+
+	function onWidgetKey(e: Event): void {
+		// composedPath may be absent in non-browser test environments.
+		if (typeof e.composedPath !== 'function') return;
+		const path = e.composedPath();
+		if (path.length === 0 || !path.includes(root)) return;
+		// stopPropagation only — preventDefault would break typing and caret
+		// movement inside our own input.
+		e.stopPropagation();
+
+		// Stopping propagation during capture means the event never reaches the
+		// input's own listeners either, so Enter -> ask is submitted from here.
+		// Implicit form submission is a *default action* and would survive
+		// stopPropagation, so preventDefault keeps this the single submit path.
+		// (Even if a UA submitted anyway, submitAsk has cleared the input by then
+		// and the form's submit handler no-ops on an empty question.)
+		if (e.type !== 'keydown') return;
+		const ke = e as KeyboardEvent;
+		// Enter on a focused button must stay a native activation click.
+		if (path[0] !== input) return;
+		if (ke.key !== 'Enter' || ke.isComposing) return;
+		ke.preventDefault();
+		submitAsk();
+	}
+
+	for (const type of KEY_EVENTS) {
+		window.addEventListener(type, onWidgetKey, true);
+	}
 
 	return {
 		center(): { x: number; y: number } {
@@ -208,6 +250,9 @@ export function createFab(opts: {
 		},
 		closePanel,
 		destroy(): void {
+			for (const type of KEY_EVENTS) {
+				window.removeEventListener(type, onWidgetKey, true);
+			}
 			root.remove();
 		},
 	};

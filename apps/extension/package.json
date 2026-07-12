@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
+    "build": "bun build.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

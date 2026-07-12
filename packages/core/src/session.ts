@@ -18,7 +18,7 @@ import type {
 } from './types.ts';
 import type { OverlayHandle } from './overlay.ts';
 import type { PointerHandle } from './pointer.ts';
-import type { ViewportCapture } from './capture.ts';
+import type { CaptureScreenshot, ViewportCapture } from './capture.ts';
 import { isInteractive, snapToElement, type SnapResult } from './snap.ts';
 
 export type SessionState =
@@ -89,7 +89,9 @@ export interface SessionDeps {
 	overlay: OverlayHandle;
 	pointer: PointerHandle;
 	fabCenter(): { x: number; y: number };
-	capture(): Promise<ViewportCapture>;
+	/** Receives `config.captureScreenshot` (see observe()); ignore it to use the
+	 *  in-page snapdom path. */
+	capture(captureScreenshot?: CaptureScreenshot): Promise<ViewportCapture>;
 	callbacks?: SessionCallbacks;
 	timings?: Partial<SessionTimings>;
 }
@@ -205,6 +207,24 @@ function meaningfulTokens(s: string): string[] {
 	return (s.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
 		(w) => w.length > 1 && !STOP_WORDS.has(w),
 	);
+}
+
+/**
+ * Does this element look like the thing the description is TALKING about?
+ *
+ * Used to cross-examine a coordinate hit (see snapFor). Deliberately lenient: it
+ * answers "is there any evidence of DISAGREEMENT", not "is this the best match".
+ * No label, or a description with no meaningful tokens, means no evidence either
+ * way — say yes and keep the coordinate hit, which is still the primary signal.
+ */
+function labelAgrees(el: Element, desc: string): boolean {
+	const label = labelOf(el);
+	if (label.length === 0) return true; // unlabelled (icon button) — cannot disagree
+	const descTokens = new Set(meaningfulTokens(desc));
+	if (descTokens.size === 0) return true; // nothing to disagree with
+	for (const t of meaningfulTokens(label)) if (descTokens.has(t)) return true;
+	const d = desc.toLowerCase();
+	return d.includes(label) || label.includes(d);
 }
 
 /**
@@ -439,7 +459,11 @@ export function createSession(deps: SessionDeps): SessionHandle {
 		detachTargetListener();
 		overlay.hide();
 		try {
-			const { screenshot, viewport } = await capture();
+			// Same shape as callProxy above: when the host supplies an override
+			// (the extension's service-worker screenshotter) capture uses it instead
+			// of rasterizing in-page, so a page CSP that blocks `img-src data:`
+			// cannot kill the observation. Absent → snapdom, as before.
+			const { screenshot, viewport } = await capture(config.captureScreenshot);
 			if (myGen !== gen) return;
 			const body: StepRequest = {
 				session_id: sessionId,
@@ -517,6 +541,24 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			const ed = resolveEditable(snap.el);
 			if (ed !== null) return ensureVisible({ el: ed, rect: ed.getBoundingClientRect() });
 		} else if (snap.el !== null && isInteractive(snap.el)) {
+			// The coordinate hit landed on something interactive — but is it the thing
+			// the model NAMED? Grounding drift of a few px is harmless in open layout
+			// (the element absorbs it), but in a dense row of small links — HN's
+			// "new | past | … | jobs | submit" nav — a small drift lands squarely on
+			// the NEIGHBOUR, which is interactive too, so the coord check passes and we
+			// confidently highlight the wrong link. The model's own `element` string is
+			// an independent signal, and it disagrees loudly in exactly that case
+			// ("submit" vs a link labelled "jobs").
+			//
+			// So: trust the coordinates unless the hit element's label contradicts the
+			// description AND the description resolves to some other element that does
+			// agree. Both conditions are required, which keeps this from firing on
+			// vague descriptions or unlabelled icon buttons (see labelAgrees).
+			if (labelAgrees(snap.el, tc.element)) return ensureVisible(snap);
+			const named = findByDescription(tc.element, false);
+			if (named !== null && named !== snap.el && labelAgrees(named, tc.element)) {
+				return ensureVisible({ el: named, rect: named.getBoundingClientRect() });
+			}
 			return ensureVisible(snap);
 		}
 		// Coord snap found nothing usable (grounding drift, or the target is

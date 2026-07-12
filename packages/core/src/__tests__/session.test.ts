@@ -151,6 +151,57 @@ describe('session', () => {
 		expect(requests[1]!.event).toBe('user_acted');
 	});
 
+	// Regression (live on news.ycombinator.com): in a dense row of small links,
+	// grounding drift of a few px lands the coordinate on the NEIGHBOUR — which is
+	// interactive too, so the coord check passed and we highlighted the wrong link.
+	// The cutout then exposed the wrong element and BLOCKED the real one, so the
+	// user could not click the thing they were being told to click and the tour
+	// could never advance. The model's own element description disagrees loudly in
+	// exactly this case, and now wins.
+	it('corrects a coordinate hit that lands on the wrong neighbouring link', async () => {
+		const jobs = document.createElement('a');
+		jobs.href = '/jobs';
+		jobs.textContent = 'jobs';
+		stubRect(jobs, 100, 10, 40, 20);
+		document.body.appendChild(jobs);
+
+		const submit = document.createElement('a');
+		submit.href = '/submit';
+		submit.textContent = 'submit';
+		stubRect(submit, 150, 10, 60, 20);
+		document.body.appendChild(submit);
+
+		// Grounding drift: the coords land on `jobs`, one item to the left.
+		document.elementFromPoint = () => jobs;
+
+		const step: Step = {
+			note: null,
+			thought: 'the user must open the submit form',
+			tool_call: {
+				tool_name: 'point',
+				element: "the 'submit' link",
+				x: 500,
+				y: 500,
+				instruction: "Click on the 'submit' link in the top navigation bar.",
+			},
+		};
+		const { requests } = mockFetch([step, answerStep()]);
+		session.ask('how do I post to hacker news?');
+		await waitFor(() => session.getState() === 'waiting_user');
+
+		// The mis-hit neighbour must NOT be the step's target.
+		jobs.click();
+		await new Promise((r) => setTimeout(r, 30));
+		expect(requests.length).toBe(1);
+		expect(session.getState()).toBe('waiting_user');
+
+		// The element the model NAMED is, so clicking it advances the tour.
+		submit.click();
+		await waitFor(() => session.getState() === 'done');
+		expect(requests.length).toBe(2);
+		expect(requests[1]!.event).toBe('user_acted');
+	});
+
 	it('skip ends the tour, clears the session, no further requests', async () => {
 		const { requests } = mockFetch([pointStep(), answerStep()]);
 		session.ask('how?');

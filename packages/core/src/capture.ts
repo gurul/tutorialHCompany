@@ -28,6 +28,9 @@
 // Same-origin <img> are kept and inline normally (same-origin fetch, no CORS).
 
 import { snapdom } from '@zumer/snapdom';
+import type { HandymanConfig } from './types.ts';
+
+export type CaptureScreenshot = NonNullable<HandymanConfig['captureScreenshot']>;
 
 /**
  * True when `raw` resolves to the current document's origin, or is an inline
@@ -80,7 +83,7 @@ export interface ViewportCapture {
 // actually has. Shrinking the raster therefore does not touch the coord math —
 // which is exactly why `viewport` MUST stay the true CSS viewport, and why the
 // downscale below preserves aspect ratio (a non-uniform squash WOULD break it).
-const MAX_IMAGE_EDGE = 1024;
+export const MAX_IMAGE_EDGE = 1024;
 
 // PNG of a full-viewport screenshot is large to encode and upload, and a big
 // image also costs the model more input tokens / latency. JPEG @ 0.72 is roughly
@@ -88,11 +91,100 @@ const MAX_IMAGE_EDGE = 1024;
 // edges legible enough for grounding; below ~0.6 labels start to smear. JPEG has
 // no alpha channel, so the canvas is filled white first (opaque background,
 // matching snapdom's own #fff default) — otherwise transparent pixels go black.
-const JPEG_QUALITY = 0.72;
+export const JPEG_QUALITY = 0.72;
 
-export async function captureViewport(): Promise<ViewportCapture> {
+// --- Keeping handyman out of its own screenshot ---
+// The snapdom path drops the widget declaratively (`exclude: ['[data-handyman]']`).
+// A REAL screenshot (chrome.tabs.captureVisibleTab) photographs the composited
+// tab — there is no exclude option, so whatever is on screen is in the shot. The
+// widget must therefore be hidden for real, in the page, before the worker fires.
+// session.observe() already calls overlay.hide(), but the FAB and the pointer are
+// still painted and would otherwise land in the observation — at best wasted
+// pixels, at worst the model grounds a step on handyman's own UI.
+//
+// visibility:hidden (not display:none) because every widget root is
+// position:fixed: it stops them painting without touching page layout, so the
+// captured pixels are exactly what the user sees minus us. `important` so a host
+// page's own `!important` rules cannot win against it (author inline !important
+// is the top of the author cascade).
+function hideWidgetRoots(): () => void {
+	const roots = [...document.querySelectorAll<HTMLElement>('[data-handyman]')];
+	const prior = roots.map((el) => el.style.getPropertyValue('visibility'));
+	const priorPriority = roots.map((el) => el.style.getPropertyPriority('visibility'));
+	for (const el of roots) el.style.setProperty('visibility', 'hidden', 'important');
+	return () => {
+		roots.forEach((el, i) => {
+			const value = prior[i] ?? '';
+			if (value === '') el.style.removeProperty('visibility');
+			else el.style.setProperty('visibility', value, priorPriority[i] ?? '');
+		});
+	};
+}
+
+/**
+ * Resolve once the style change above has actually been PAINTED.
+ *
+ * Setting `visibility:hidden` only dirties style — the compositor has not been
+ * told anything yet. captureVisibleTab grabs the composited surface, so firing it
+ * in the same task would photograph the frame that still contains the widget.
+ *
+ * Double rAF: the first callback runs just before the frame that includes our
+ * mutation is rendered; the second is queued for the frame AFTER it, so by the
+ * time it runs that mutation has been through paint/commit. (The message hop to
+ * the service worker adds several more ms on top, so this is comfortable in
+ * practice.) rAF is also throttled to ~0 in background tabs — hence the timeout
+ * fallback, which keeps a capture in a backgrounded tab from hanging forever.
+ */
+function afterPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		if (typeof requestAnimationFrame !== 'function') {
+			setTimeout(resolve, 32);
+			return;
+		}
+		let done = false;
+		const finish = (): void => {
+			if (done) return;
+			done = true;
+			resolve();
+		};
+		requestAnimationFrame(() => requestAnimationFrame(finish));
+		setTimeout(finish, 250);
+	});
+}
+
+/**
+ * Capture the viewport for one observation.
+ *
+ * @param captureScreenshot Optional out-of-page screenshotter (the extension's
+ * service-worker bridge). When supplied it REPLACES snapdom entirely — the page
+ * never rasterizes or decodes an image, which is the only way to survive a CSP
+ * whose `img-src` omits `data:`. When absent (embed script / bookmarklet) the
+ * snapdom path below is used unchanged.
+ */
+export async function captureViewport(
+	captureScreenshot?: CaptureScreenshot,
+): Promise<ViewportCapture> {
 	const width = window.innerWidth;
 	const height = window.innerHeight;
+
+	if (captureScreenshot !== undefined) {
+		// The raster comes from chrome.tabs.captureVisibleTab, which returns the
+		// VISIBLE VIEWPORT at devicePixelRatio — i.e. exactly the CSS viewport
+		// region, uniformly scaled by dpr, so it is aspect-preserving by
+		// construction and the normalized-coordinate contract above holds as-is.
+		// (The worker's optional downscale preserves aspect too — see background.ts.)
+		// `viewport` therefore stays the true CSS viewport, NOT the raster size.
+		const restore = hideWidgetRoots();
+		try {
+			await afterPaint();
+			const screenshot = await captureScreenshot({ width, height });
+			return { screenshot, viewport: { width, height } };
+		} finally {
+			// Unconditional: a failed/timed-out capture must never leave the user
+			// staring at an invisible widget.
+			restore();
+		}
+	}
 
 	// One scalar for both axes so the output preserves the viewport aspect ratio
 	// exactly — required by the normalized-coordinate contract above. Never > 1

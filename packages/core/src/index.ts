@@ -53,9 +53,12 @@ function hotkeyMatches(e: KeyboardEvent, h: Hotkey): boolean {
 
 // Voice module contract (built in parallel under src/voice/). Types are
 // declared locally so core compiles and ships while voice is absent.
-// `transport` mirrors HandymanConfig.transport: proxy calls (voice-token) route
-// through the extension bridge so voice works on strict-CSP third-party sites.
+// `transport` mirrors HandymanConfig.transport and `socketFactory`
+// HandymanConfig.socketFactory: BOTH halves of the voice network surface (the
+// /voice-token fetch and the Gradium WebSocket) route through the extension
+// bridge, so voice works on strict-CSP third-party sites.
 type VoiceTransport = HandymanConfig['transport'];
+type VoiceSocketFactory = HandymanConfig['socketFactory'];
 interface VoiceTTS {
 	/** Create + resume the AudioContext; must run from a user gesture. */
 	unlock(): void;
@@ -63,12 +66,43 @@ interface VoiceTTS {
 	stop(): void;
 }
 interface VoiceModule {
-	createTTS(endpoint: string, transport?: VoiceTransport): VoiceTTS;
+	createTTS(
+		endpoint: string,
+		transport?: VoiceTransport,
+		socketFactory?: VoiceSocketFactory,
+	): VoiceTTS;
 	startSTT(
 		endpoint: string,
-		opts: { onFinal(text: string): void },
+		opts: { onFinal(text: string): void; onError?(err: unknown): void },
 		transport?: VoiceTransport,
+		socketFactory?: VoiceSocketFactory,
 	): Promise<{ stop(): void }>;
+}
+
+/**
+ * Human-readable cause for a voice failure. Voice dying silently is why the mic
+ * "just closes instantly" with nothing in the console — every branch here is a
+ * failure seen in the wild, and the user can act on each one.
+ */
+function voiceErrorMessage(err: unknown): string {
+	const name =
+		typeof err === 'object' && err !== null && 'name' in err
+			? String((err as { name: unknown }).name)
+			: '';
+	const msg = err instanceof Error ? err.message : String(err);
+	if (name === 'NotAllowedError' || /permission denied|not allowed/i.test(msg)) {
+		return 'Handyman needs microphone access. Allow the mic for this site, then try again.';
+	}
+	if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+		return 'No microphone found. Connect one, then try again.';
+	}
+	if (/\b503\b/.test(msg)) {
+		return 'Voice is not configured on the Handyman server (missing GRADIUM_API_KEY).';
+	}
+	if (/websocket|transport|fetch|network|timeout/i.test(msg)) {
+		return 'Voice could not reach the speech service — this site may be blocking it. You can still type your question.';
+	}
+	return 'Voice is unavailable right now. You can still type your question.';
 }
 
 async function loadVoice(): Promise<VoiceModule | null> {
@@ -124,6 +158,25 @@ export function init(config: HandymanConfig): void {
 
 	const pointer = createPointer({ zIndex: z + 3 });
 
+	/** Narration failed: say so in the console, never touch the tour's UI —
+	 *  the instruction text is already on screen, and the answer card must not
+	 *  be replaced by an error the user can do nothing about mid-step. */
+	function narrationFailed(err: unknown): void {
+		console.error('[handyman] voice narration failed:', voiceErrorMessage(err), err);
+	}
+
+	/** Listening failed: this one the user asked for, so it needs an answer.
+	 *  Reuse the overlay's answer card (the only message affordance there is),
+	 *  but only while no tour is on screen — a live tour outranks it. */
+	function listenFailed(err: unknown): void {
+		console.error('[handyman] voice input failed:', voiceErrorMessage(err), err);
+		const state = session.getState();
+		if (state !== 'idle' && state !== 'done') return;
+		overlay.showAnswer(voiceErrorMessage(err), () => {
+			overlay.hide();
+		});
+	}
+
 	const session = createSession({
 		config,
 		overlay,
@@ -135,11 +188,11 @@ export function init(config: HandymanConfig): void {
 			// before it acts. Resolves immediately when TTS is off/absent.
 			onStepInstruction: (text) => {
 				tts?.stop();
-				return tts?.speak(text).catch(() => {}) ?? Promise.resolve();
+				return tts?.speak(text).catch(narrationFailed) ?? Promise.resolve();
 			},
 			onAnswer: (text) => {
 				tts?.stop();
-				return tts?.speak(text).catch(() => {}) ?? Promise.resolve();
+				return tts?.speak(text).catch(narrationFailed) ?? Promise.resolve();
 			},
 		},
 	});
@@ -161,7 +214,9 @@ export function init(config: HandymanConfig): void {
 	// Voice is optional: wire TTS + the FAB mic + the keyboard hotkey if present.
 	void loadVoice().then((voice) => {
 		if (voice === null || instance === null) return;
-		if (config.tts !== false) tts = voice.createTTS(config.endpoint, config.transport);
+		if (config.tts !== false) {
+			tts = voice.createTTS(config.endpoint, config.transport, config.socketFactory);
+		}
 		if (config.stt === false) return;
 
 		// Shared listen path: the FAB mic button and the keyboard hotkey both
@@ -178,27 +233,41 @@ export function init(config: HandymanConfig): void {
 			listening = true;
 			fab.setListening(true);
 			voice!
-				.startSTT(config.endpoint, {
-					// Gradium's semantic VAD (or a server end_of_stream) resolves the
-					// utterance here; stop() only cancels and never reaches this.
-					onFinal: (text) => {
-						listening = false;
-						sttHandle = null;
-						fab.setListening(false);
-						fab.closePanel();
-						if (text) session.ask(text);
+				.startSTT(
+					config.endpoint,
+					{
+						// Gradium's semantic VAD (or a server end_of_stream) resolves the
+						// utterance here; stop() only cancels and never reaches this.
+						onFinal: (text) => {
+							listening = false;
+							sttHandle = null;
+							fab.setListening(false);
+							fab.closePanel();
+							if (text) session.ask(text);
+						},
+						// Mid-utterance death (socket dropped, server error frame).
+						onError: (err) => {
+							if (!listening) return; // already cancelled by the user
+							listening = false;
+							sttHandle = null;
+							fab.setListening(false);
+							listenFailed(err);
+						},
 					},
-				}, config.transport)
+					config.transport,
+					config.socketFactory,
+				)
 				.then((handle) => {
 					// A cancel that raced the await already flipped `listening`; if so,
 					// tear the just-opened session straight back down.
 					if (!listening) handle.stop();
 					else sttHandle = handle;
 				})
-				.catch(() => {
+				.catch((err: unknown) => {
 					listening = false;
 					sttHandle = null;
 					fab.setListening(false);
+					listenFailed(err);
 				});
 		}
 

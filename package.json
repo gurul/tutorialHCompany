@@ -7,7 +7,9 @@
     "apps/*"
   ],
   "scripts": {
+    "demo": "bun run build && bun run build:ext && bun run server",
     "build": "bun run --filter '@handyman/core' build",
+    "build:ext": "bun run --filter '@handyman/extension' build",
     "server": "bun run --filter '@handyman/server' start",
     "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p server",
     "test": "bun test packages/core"

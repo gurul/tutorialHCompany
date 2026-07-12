@@ -19,14 +19,16 @@ export const SCENES = [
 	{ id: 'cold-open-questions', frames: 210, Comp: ColdOpenQuestions },
 	{ id: 'ticket-pile', frames: 210, Comp: TicketPile },
 	{ id: 'reveal-handyman', frames: 240, Comp: RevealHandyman },
-	{ id: 'demo-slate', frames: 600, Comp: DemoSlate },
+	// Sized to the real demo footage (public/demo.mov, 32.28s ≈ 968 frames);
+	// was 600 when the slate placeholder occupied this slot.
+	{ id: 'demo-slate', frames: 968, Comp: DemoSlate },
 	{ id: 'zero-authored-steps', frames: 240, Comp: ZeroAuthoredSteps },
 	{ id: 'two-modes-and-voice', frames: 300, Comp: TwoModesAndVoice },
 	{ id: 'meet-the-hand', frames: 240, Comp: MeetTheHand },
 	{ id: 'install-endcard', frames: 240, Comp: InstallEndcard },
 ] as const;
 
-export const TOTAL_FRAMES = SCENES.reduce((sum, s) => sum + s.frames, 0); // 2280 = 76s
+export const TOTAL_FRAMES = SCENES.reduce((sum, s) => sum + s.frames, 0);
 
 export const HandymanLaunch: React.FC = () => (
 	<AbsoluteFill style={{ backgroundColor: '#16161a' }}>

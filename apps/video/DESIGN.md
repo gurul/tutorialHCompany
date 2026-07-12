@@ -52,7 +52,7 @@ character and bookends the piece.
 | 1 | ColdOpenQuestions.tsx | ColdOpenQuestions | 210 |
 | 2 | TicketPile.tsx | TicketPile | 210 |
 | 3 | RevealHandyman.tsx | RevealHandyman | 240 |
-| 4 | DemoSlate.tsx | DemoSlate | 600 |
+| 4 | DemoSlate.tsx | DemoSlate | 968 (fits public/demo.mov, 32.28s) |
 | 5 | ZeroAuthoredSteps.tsx | ZeroAuthoredSteps | 240 |
 | 6 | TwoModesAndVoice.tsx | TwoModesAndVoice | 300 |
 | 7 | MeetTheHand.tsx | MeetTheHand | 240 |

@@ -59,7 +59,7 @@ Load `apps/extension/dist` as an unpacked extension (`chrome://extensions` → D
 | `server` | Key-holding proxy: `/api/step` (Holo3), `/api/voice-token` (Gradium), widget hosting |
 | `server/scout` | Multi-agent site scout (hai-agents SDK) |
 | `apps/extension` | Chrome extension: runs the widget on any site, bridges capture/network/voice past page CSP |
-| `apps/video` | Remotion launch film (76 s, 8 scenes, 20 s demo-footage slate) — see its README |
+| `apps/video` | Remotion launch film (~88 s, 8 scenes + real demo footage) — see its README |
 | `assets` | Brand assets: the hand as SVG + transparent/white PNGs |
 | `docs/PLAN-adaptive-tours.md` | Architecture plan of record |
 

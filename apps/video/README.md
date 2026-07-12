@@ -1,8 +1,8 @@
 # @handyman/video
 
-The handyman launch film — 76 s · 1920×1080 · 30 fps, built in
+The handyman launch film — ~88 s · 1920×1080 · 30 fps, built in
 [Remotion](https://remotion.dev) 4. Eight fully-produced motion-graphics
-scenes with one 20 s slate reserved for real demo footage.
+scenes around the real product demo (scene 4, `public/demo.mov`, 32 s).
 
 ```bash
 bun install                # from the repo root
@@ -11,22 +11,13 @@ bun run studio             # live preview + scrubbing
 bun run render             # → out/handyman-launch.mp4
 ```
 
-## Dropping in the demo footage
+## Swapping the demo footage
 
-Scene 4 (`src/scenes/DemoSlate.tsx`, global frames 660–1259) renders a
-browser-chrome mockup holding a placeholder slate. Everything replaceable
-lives in the single `<SlateContents />` component — delete it and put your
-recording in its place:
-
-```tsx
-import { OffthreadVideo, staticFile } from 'remotion';
-// inside the BrowserChrome viewport, replacing <SlateContents />:
-<OffthreadVideo src={staticFile('demo.mp4')} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-```
-
-Put the file at `public/demo.mp4` (18–22 s plays fully; longer footage is
-cut at the scene boundary). The chrome frame, shadow, and both zoom
-transitions survive the swap untouched.
+Scene 4 (`src/scenes/DemoSlate.tsx`) renders a browser-chrome mockup that
+auto-plays `public/demo.mov` (or `demo.mp4`) when the file exists and falls
+back to a framed placeholder slate when it doesn't — no code edit needed to
+swap recordings. If the new footage's length differs, adjust the
+`demo-slate` frame count in `src/HandymanLaunch.tsx` (duration s × 30).
 
 ## Music
 

@@ -7,6 +7,7 @@ import { createPointer } from './pointer.ts';
 import { createFab } from './fab.ts';
 import { captureViewport } from './capture.ts';
 import { createSession, type SessionHandle } from './session.ts';
+import { ensureBrandFont } from './fonts.ts';
 
 export type * from './types.ts';
 export type { SessionCallbacks, SessionState } from './session.ts';
@@ -164,10 +165,18 @@ export function init(config: HandymanConfig): void {
 	// the overlay and a second query then never starts cleanly.
 	document.querySelectorAll('[data-handyman]').forEach((h) => h.remove());
 
+	// Widget typography (Figtree) — must live on the document, not in the
+	// shadow roots (see fonts.ts). Re-injected after the sweep above.
+	ensureBrandFont();
+
 	const z = config.zIndex ?? DEFAULT_Z;
 	let tts: VoiceTTS | null = null;
 	// Hotkey listener teardown, installed once voice loads; called by destroy().
 	let removeHotkey: (() => void) | null = null;
+	// Cancels an in-flight listen, once voice wires. Clicking "Ask" mid-listen
+	// must kill the mic NOW — the VAD otherwise keeps it hot for a beat after
+	// the question has already been submitted by keyboard.
+	let stopVoiceNow: (() => void) | null = null;
 
 	// Buddy pointer state. buddyOut mirrors "the pointer is away from home" —
 	// it stays true while a tour guides (follow mode exits inside pointer.ts,
@@ -214,6 +223,7 @@ export function init(config: HandymanConfig): void {
 		// step narration that follows is audible under Chrome's autoplay policy.
 		onAsk: (q) => {
 			tts?.unlock();
+			stopVoiceNow?.();
 			markBuddyOut();
 			session.ask(q);
 		},
@@ -274,6 +284,14 @@ export function init(config: HandymanConfig): void {
 				tts?.stop();
 				return tts?.speak(text).catch(narrationFailed) ?? Promise.resolve();
 			},
+			// The beat between submitting a question and the first card is dead
+			// air (model round-trip); the FAB pill fills it. `asking` is the
+			// initial turn, `observing` the between-steps screenshot→/step trip.
+			onStateChange: (s) => {
+				if (s === 'asking') fab.setWorking('Analyzing…');
+				else if (s === 'observing') fab.setWorking('Working…');
+				else fab.setWorking(null);
+			},
 		},
 	});
 
@@ -286,6 +304,7 @@ export function init(config: HandymanConfig): void {
 		destroy() {
 			removeHotkey?.();
 			removeHotkey = null;
+			stopVoiceNow = null;
 			session.destroy();
 			overlay.destroy();
 			pointer.destroy();
@@ -368,6 +387,7 @@ export function init(config: HandymanConfig): void {
 			sttHandle?.stop();
 			sttHandle = null;
 		}
+		stopVoiceNow = stopListening;
 
 		function toggleListening(): void {
 			if (listening) stopListening();

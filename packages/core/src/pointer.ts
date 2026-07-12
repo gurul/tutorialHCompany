@@ -1,11 +1,17 @@
-// SVG arrow pointer. Two-wrapper trick from the reference: the OUTER wrapper
+// Hand pointer. Two-wrapper trick from the reference: the OUTER wrapper
 // travels (a persistent spring loop integrates its transform toward a
 // retargetable goal), the INNER wrapper idle-bobs on a keyframe animation, so
 // travel and bob never fight over `transform`. dockTo still uses a one-shot
 // CSS transition for the shrink-to-FAB landing. Follow ("buddy") mode springs
 // the pointer after the user's real cursor with a trailing offset.
+//
+// The visual is the vendored hand engine (hand.ts): an open hand while it
+// buddies along, an index-finger point while it guides, a grab on press, and
+// an excited wave as it docks home. Position/rotation stay owned by the
+// spring here; hand.ts only paints poses.
 
 import type { CutBox, Side } from './overlay.ts';
+import { createHand, DEFAULT_ACCENT, type HandPose } from './hand.ts';
 
 export interface PointerHandle {
 	show(): void;
@@ -75,17 +81,25 @@ const CAN_RAF =
 	typeof requestAnimationFrame === 'function' &&
 	typeof cancelAnimationFrame === 'function';
 
-// Minimal cursor dart, tip at top center pointing straight up (the SIDE_ROT
-// map depends on this convention). Slender, slightly curved sides; ink fill
-// with a crisp paper outline so it reads on any background. The floating
-// drop-shadow lives in POINTER_CSS (svg-level filter) so the FAB glyph —
-// which reuses this markup by class — stays flat.
-export const POINTER_SVG = `<svg class="handyman-pointer__svg" width="${POINTER_SIZE}" height="${POINTER_SIZE}" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-<path d="M20 3 C21.2 6.4 25.1 18.6 28.5 27.3 C29 28.6 27.7 29.8 26.5 29.2 L21.3 26.6 C20.5 26.2 19.5 26.2 18.7 26.6 L13.5 29.2 C12.3 29.8 11 28.6 11.5 27.3 C14.9 18.6 18.8 6.4 20 3 Z" fill="var(--handyman-ink, #16161a)" stroke="var(--handyman-paper, #fff)" stroke-width="1.75" stroke-linejoin="round"/>
-</svg>`;
+// Hand canvas, larger than the 40px logical host so the art has room; it is
+// centered on the host, so all spring/geometry math stays in host coordinates
+// (tests and EDGE_GAP are untouched by the visual size). 76 ≈ the reference
+// engine's cursor size (80) — smaller and the five-stroke hand stops reading
+// as a hand.
+const HAND_SIZE = 76;
 
-// The arrow art points up; rotate the whole wrapper so it points at the
-// target from whichever side it sits on.
+// In the `pointer` pose the index finger aims up-and-right (~60.5° above the
+// horizontal after the engine's X-mirror). Rotating the host by this offset
+// re-aims it straight up, which is the convention SIDE_ROT assumes.
+const AIM_OFFSET = -29.5;
+
+// Index fingertip in host coordinates (unrotated): mirrored tip
+// (242.03, -197.65) × HAND_SIZE/refSize(841.32), relative to host center.
+const TIP_X = HALF + 242.03 * (HAND_SIZE / 841.32);
+const TIP_Y = HALF + -197.65 * (HAND_SIZE / 841.32);
+
+// The index finger points up at rotation 0 (after AIM_OFFSET); rotate the
+// whole wrapper so it points at the target from whichever side it sits on.
 const SIDE_ROT: Record<Side, number> = {
 	bottom: 0, // below the target, pointing up
 	top: 180, // above, pointing down
@@ -108,8 +122,14 @@ const POINTER_CSS = `
 	will-change: transform;
 	pointer-events: none;
 }
-.handyman-pointer__svg {
+.handyman-pointer__hand {
+	position: absolute;
+	left: ${(POINTER_SIZE - HAND_SIZE) / 2}px;
+	top: ${(POINTER_SIZE - HAND_SIZE) / 2}px;
+	width: ${HAND_SIZE}px;
+	height: ${HAND_SIZE}px;
 	filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.28));
+	pointer-events: none;
 }
 .handyman-pointer__bob {
 	animation: handyman-bob 2.4s ease-in-out infinite;
@@ -119,10 +139,10 @@ const POINTER_CSS = `
 }
 .handyman-pointer__ripple {
 	position: absolute;
-	/* Centered on the arrow tip (top center of the box); the host's rotation
-	   carries it to wherever the tip actually points. */
-	left: ${HALF - 4}px;
-	top: -1px;
+	/* Centered on the index fingertip; the host's rotation carries it to
+	   wherever the finger actually points. */
+	left: ${(TIP_X - 4).toFixed(1)}px;
+	top: ${(TIP_Y - 4).toFixed(1)}px;
 	width: 8px;
 	height: 8px;
 	border-radius: 999px;
@@ -173,10 +193,28 @@ export function createPointer(opts: {
 
 	const bob = document.createElement('div');
 	bob.className = 'handyman-pointer__bob';
-	bob.innerHTML = POINTER_SVG;
 	shadow.appendChild(bob);
 
 	document.body.appendChild(wrap);
+
+	// Theme the hand from the page's widget accent (custom props inherit into
+	// the host element); createHand derives its five finger tints from it.
+	const accent =
+		getComputedStyle(wrap).getPropertyValue('--handyman-accent').trim() || DEFAULT_ACCENT;
+	const hand = createHand({ size: HAND_SIZE, accent });
+	const handWrap = document.createElement('div');
+	handWrap.className = 'handyman-pointer__hand';
+	handWrap.appendChild(hand.el);
+	bob.appendChild(handWrap);
+
+	// The pose the hand should idle in for the current mode — press() borrows
+	// `grab` and must hand back whatever the mode had.
+	let modePose: HandPose = 'open';
+	function setModePose(p: HandPose): void {
+		modePose = p;
+		hand.setPose(p);
+	}
+
 	wrap.style.display = 'none';
 
 	// Logical state the spring integrates: pointer CENTER (cx, cy) + rotation,
@@ -343,6 +381,7 @@ export function createPointer(opts: {
 		},
 		pointTo(cut: CutBox, side: Side): void {
 			exitFollow(); // tour guidance outranks buddy
+			setModePose('pointer');
 			const cx = cut.left + cut.width / 2;
 			const cy = cut.top + cut.height / 2;
 			let x = cx;
@@ -361,10 +400,12 @@ export function createPointer(opts: {
 					y = cut.top - EDGE_GAP;
 					break;
 			}
-			retarget(x, y, SIDE_ROT[side]);
+			retarget(x, y, SIDE_ROT[side] + AIM_OFFSET);
 		},
 		press(): Promise<void> {
 			bob.className = 'handyman-pointer__bob--press';
+			// Momentary grab while the "click" lands, then back to the mode pose.
+			hand.setPose('grab');
 			if (!prefersReducedMotion()) {
 				// Click ripple at the arrow tip; the host's rotation carries it to
 				// wherever the tip points. Removed after its animation ends.
@@ -376,6 +417,7 @@ export function createPointer(opts: {
 			return new Promise((resolve) => {
 				setTimeout(() => {
 					bob.className = 'handyman-pointer__bob';
+					hand.setPose(modePose);
 					resolve();
 				}, PRESS_MS);
 			});
@@ -387,6 +429,7 @@ export function createPointer(opts: {
 			stopLoop();
 			cancelDock(); // restart: only one landing timer may be live
 			bob.className = ''; // Bob pauses so the dock isn't mid-hop.
+			hand.setPose('excited'); // wave goodbye on the flight home
 			const dockMs = prefersReducedMotion() ? 0 : DOCK_MS;
 			wrap.style.transition = `transform ${dockMs}ms ease, opacity 300ms ease`;
 			curX = x;
@@ -413,6 +456,7 @@ export function createPointer(opts: {
 			// snaps wherever it currently is instead of gliding from a stale spot.
 			if (from) snap(from.x, from.y, 0);
 			else if (!placed) snap(curX, curY, 0);
+			setModePose('open');
 			following = true;
 			show();
 			// Duplicate adds are deduped by the browser (same fn + capture).
@@ -428,6 +472,7 @@ export function createPointer(opts: {
 			exitFollow();
 			stopLoop();
 			cancelDock();
+			hand.destroy();
 			wrap.remove();
 		},
 	};

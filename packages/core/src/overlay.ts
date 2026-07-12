@@ -107,7 +107,7 @@ const OVERLAY_CSS = `
 	   only the card re-enables pointer-events. Explicit font/box baseline so
 	   nothing inherits from the third-party host page. */
 	pointer-events: none;
-	font-family: var(--handyman-font, system-ui, sans-serif);
+	font-family: var(--handyman-font, 'Figtree', system-ui, sans-serif);
 	font-size: 13px;
 	line-height: 1.4;
 	font-weight: 400;
@@ -151,7 +151,7 @@ const OVERLAY_CSS = `
 		0 24px 56px rgba(0, 0, 0, 0.08);
 	padding: 16px;
 	outline: none;
-	font-family: var(--handyman-font, system-ui, sans-serif);
+	font-family: var(--handyman-font, 'Figtree', system-ui, sans-serif);
 	/* Same ease-out family as the spotlight ring so the two elements tracking
 	   one step move stay in sync; overshoot is reserved for the pointer (real
 	   spring) and would also carry the card past its clamped placement. */
@@ -173,6 +173,8 @@ const OVERLAY_CSS = `
 	align-items: center;
 	gap: 8px;
 	font-size: 11px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
 	color: var(--handyman-ink-40, rgba(22, 22, 26, 0.4));
 	margin-bottom: 6px;
 }
@@ -190,8 +192,11 @@ const OVERLAY_CSS = `
 	border-color: var(--handyman-accent, #4353ff);
 }
 .handyman-card__text {
-	font-size: 13px;
-	line-height: 1.4;
+	/* The instruction is the card's headline — a step up from the 13px chrome,
+	   medium weight (Figtree is variable, so 500 renders true, not faux-bold). */
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1.45;
 	margin-bottom: 12px;
 }
 .handyman-card__row {
@@ -209,6 +214,8 @@ const OVERLAY_CSS = `
 	background: var(--handyman-paper, #fff);
 	color: var(--handyman-ink, #16161a);
 	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
 	font-family: inherit;
 	border-radius: 8px;
 	padding: 6px 10px;

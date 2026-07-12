@@ -1,7 +1,7 @@
 // Launcher FAB: fixed bottom-right circle where the pointer rests, plus a
 // small ask panel (text input + mic placeholder wired to voice by index.ts).
 
-import { POINTER_SVG } from './pointer.ts';
+import { handGlyphSvg } from './hand.ts';
 
 export interface FabHandle {
 	/** Viewport center of the FAB circle (dock target for the pointer). */
@@ -26,6 +26,12 @@ export interface FabHandle {
 	 * advertising none.
 	 */
 	setHotkeyLabel(label: string): void;
+	/**
+	 * Show a status pill beside the FAB ("Analyzing…", "Working…") while the
+	 * agent round-trips, so the beat between asking and the first step is never
+	 * dead air. null hides it.
+	 */
+	setWorking(label: string | null): void;
 	closePanel(): void;
 	destroy(): void;
 }
@@ -36,7 +42,7 @@ const FAB_CSS = `
 :host {
 	/* Explicit font baseline + box reset so the FAB and ask-panel input/buttons
 	   never inherit the third-party host page's form resets or typography. */
-	font-family: var(--handyman-font, system-ui, sans-serif);
+	font-family: var(--handyman-font, 'Figtree', system-ui, sans-serif);
 	font-size: 13px;
 	line-height: 1.4;
 	font-weight: 400;
@@ -58,14 +64,11 @@ const FAB_CSS = `
 	cursor: pointer;
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
-.handyman-fab .handyman-pointer__svg {
-	width: 24px;
-	height: 24px;
+.handyman-fab .handyman-hand-glyph {
+	width: 26px;
+	height: 27px;
+	color: var(--handyman-paper, #fff);
 	transition: opacity 0.2s ease;
-}
-.handyman-fab .handyman-pointer__svg path {
-	fill: var(--handyman-paper, #fff);
-	stroke: var(--handyman-ink, #16161a);
 }
 /* Empty-home look while the buddy pointer is out roaming: dim the resident
    glyph and reveal a hollow dashed ring where it usually sits. */
@@ -79,8 +82,51 @@ const FAB_CSS = `
 	transition: opacity 0.2s ease;
 	pointer-events: none;
 }
-.handyman-fab--out .handyman-pointer__svg { opacity: 0.3; }
+.handyman-fab--out .handyman-hand-glyph { opacity: 0.3; }
 .handyman-fab--out::after { opacity: 0.35; }
+/* Working pill: floats left of the FAB while the agent thinks. aria-live
+   announces the label; the dots are decoration only. */
+.handyman-status {
+	position: fixed;
+	right: ${20 + FAB_SIZE + 10}px;
+	bottom: ${20 + FAB_SIZE / 2 - 15}px;
+	height: 30px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--handyman-paper, #fff);
+	color: var(--handyman-ink, #16161a);
+	border: 1px solid var(--handyman-border, rgba(22, 22, 26, 0.1));
+	border-radius: 999px;
+	padding: 0 12px;
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+	pointer-events: none;
+	animation: handyman-status-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes handyman-status-in {
+	from { opacity: 0; transform: translateX(6px); }
+	to { opacity: 1; transform: translateX(0); }
+}
+.handyman-status__dot {
+	width: 3.5px;
+	height: 3.5px;
+	border-radius: 50%;
+	background: var(--handyman-accent, #4353ff);
+	animation: handyman-status-dot 1.2s ease-in-out infinite;
+}
+.handyman-status__dot:nth-child(2) { animation-delay: 0.15s; }
+.handyman-status__dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes handyman-status-dot {
+	0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+	30% { opacity: 1; transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.handyman-status { animation: none; }
+	.handyman-status__dot { animation: none; opacity: 0.7; }
+}
 /* Recording indicator: accent fill + pulsing ring while listening. */
 .handyman-fab--listening {
 	background: var(--handyman-recording, #e5484d);
@@ -108,7 +154,7 @@ const FAB_CSS = `
 	padding: 10px;
 	display: flex;
 	gap: 6px;
-	font-family: var(--handyman-font, system-ui, sans-serif);
+	font-family: var(--handyman-font, 'Figtree', system-ui, sans-serif);
 }
 .handyman-ask__input {
 	flex: 1;
@@ -134,6 +180,8 @@ const FAB_CSS = `
 .handyman-ask__btn--primary {
 	background: var(--handyman-ink, #16161a);
 	color: var(--handyman-paper, #fff);
+	font-weight: 600;
+	letter-spacing: 0.01em;
 }
 .handyman-ask__btn--listening {
 	background: var(--handyman-recording, #e5484d);
@@ -164,8 +212,29 @@ export function createFab(opts: {
 	fab.className = 'handyman-fab';
 	fab.setAttribute('aria-label', 'Ask Handyman');
 	fab.style.zIndex = String(opts.zIndex);
-	fab.innerHTML = POINTER_SVG;
+	fab.innerHTML = handGlyphSvg(26, 27);
 	shadow.appendChild(fab);
+
+	// Status pill — hidden until setWorking gives it a label.
+	const statusPill = document.createElement('div');
+	statusPill.className = 'handyman-status';
+	statusPill.style.zIndex = String(opts.zIndex);
+	statusPill.style.display = 'none';
+	statusPill.setAttribute('role', 'status');
+	statusPill.setAttribute('aria-live', 'polite');
+	const statusLabel = document.createElement('span');
+	const statusDots = document.createElement('span');
+	statusDots.setAttribute('aria-hidden', 'true');
+	statusDots.style.display = 'inline-flex';
+	statusDots.style.gap = '3px';
+	for (let i = 0; i < 3; i++) {
+		const d = document.createElement('span');
+		d.className = 'handyman-status__dot';
+		statusDots.appendChild(d);
+	}
+	statusPill.appendChild(statusLabel);
+	statusPill.appendChild(statusDots);
+	shadow.appendChild(statusPill);
 
 	const panel = document.createElement('form');
 	panel.className = 'handyman-ask';
@@ -313,6 +382,17 @@ export function createFab(opts: {
 				'aria-label',
 				on ? 'Ask Handyman (pointer is out — press to send it home)' : 'Ask Handyman',
 			);
+		},
+		setWorking(label: string | null): void {
+			if (label === null) {
+				statusPill.style.display = 'none';
+				statusLabel.textContent = '';
+				return;
+			}
+			// Same-label repeat: leave it alone (no animation restart / SR respeak).
+			if (statusPill.style.display !== 'none' && statusLabel.textContent === label) return;
+			statusLabel.textContent = label;
+			statusPill.style.display = '';
 		},
 		setHotkeyLabel(label: string): void {
 			input.placeholder = `How do I…? (${label} to speak)`;

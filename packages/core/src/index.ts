@@ -51,6 +51,38 @@ function hotkeyMatches(e: KeyboardEvent, h: Hotkey): boolean {
 	);
 }
 
+/**
+ * Human label for a hotkey spec: "Alt+KeyH" → "Alt+H". Strips the physical
+ * KeyboardEvent.code prefixes (Key/Digit) and, on Mac-like platforms, renders
+ * Alt/Meta the way the OS labels them (⌥/⌘). Pure — platform is injected.
+ */
+function formatHotkeyLabel(spec: string, platform: string): string {
+	const mac = /mac|iphone|ipad|ipod/i.test(platform);
+	return spec
+		.split('+')
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0)
+		.map((part) => {
+			switch (part.toLowerCase()) {
+				case 'ctrl':
+				case 'control':
+					return 'Ctrl';
+				case 'alt':
+				case 'option':
+					return mac ? '⌥' : 'Alt';
+				case 'shift':
+					return 'Shift';
+				case 'meta':
+				case 'cmd':
+				case 'command':
+					return mac ? '⌘' : 'Meta';
+				default:
+					return part.replace(/^(Key|Digit)/, '');
+			}
+		})
+		.join('+');
+}
+
 // Voice module contract (built in parallel under src/voice/). Types are
 // declared locally so core compiles and ships while voice is absent.
 // `transport` mirrors HandymanConfig.transport and `socketFactory`
@@ -117,6 +149,8 @@ async function loadVoice(): Promise<VoiceModule | null> {
 
 interface Instance {
 	session: SessionHandle;
+	/** ask() that also marks the FAB "pointer out" (see markBuddyOut). */
+	ask(question: string): void;
 	destroy(): void;
 }
 
@@ -135,12 +169,52 @@ export function init(config: HandymanConfig): void {
 	// Hotkey listener teardown, installed once voice loads; called by destroy().
 	let removeHotkey: (() => void) | null = null;
 
+	// Buddy pointer state. buddyOut mirrors "the pointer is away from home" —
+	// it stays true while a tour guides (follow mode exits inside pointer.ts,
+	// but the FAB must still read empty) and clears ONLY in onDock below, so
+	// session-driven docks (tour finish/skip) reset the FAB automatically.
+	let buddyOut = false;
+
+	function summonBuddy(): void {
+		if (buddyOut) return;
+		const s = session.getState();
+		if (s !== 'idle' && s !== 'done') return; // tour guidance outranks buddy
+		pointer.show();
+		pointer.startFollow(fab.center());
+		fab.setBuddyOut(true);
+		buddyOut = true;
+	}
+
+	function dockBuddy(): void {
+		if (!buddyOut) return;
+		// Same guard as summonBuddy: a live tour owns the pointer, and a FAB
+		// press mid-tour must not yank it off the step target (it would also
+		// clear buddyOut via onDock while the tour still needs it).
+		const s = session.getState();
+		if (s !== 'idle' && s !== 'done') return;
+		const c = fab.center();
+		// buddyOut clears in onDock — the single place buddy state resets.
+		pointer.dockTo(c.x, c.y).catch(() => {});
+	}
+
+	/** Every ask puts the pointer on duty (session shows it via pointTo), so
+	 *  the FAB reads "out" until the session docks the pointer home. */
+	function markBuddyOut(): void {
+		buddyOut = true;
+		fab.setBuddyOut(true);
+	}
+
 	const fab = createFab({
 		zIndex: z,
+		onFabPress: () => {
+			if (buddyOut) dockBuddy();
+			else summonBuddy();
+		},
 		// FAB submit is a real user gesture: unlock the AudioContext here so the
 		// step narration that follows is audible under Chrome's autoplay policy.
 		onAsk: (q) => {
 			tts?.unlock();
+			markBuddyOut();
 			session.ask(q);
 		},
 	});
@@ -156,7 +230,13 @@ export function init(config: HandymanConfig): void {
 		},
 	});
 
-	const pointer = createPointer({ zIndex: z + 3 });
+	const pointer = createPointer({
+		zIndex: z + 3,
+		onDock: () => {
+			buddyOut = false;
+			fab.setBuddyOut(false);
+		},
+	});
 
 	/** Narration failed: say so in the console, never touch the tour's UI —
 	 *  the instruction text is already on screen, and the answer card must not
@@ -199,6 +279,10 @@ export function init(config: HandymanConfig): void {
 
 	instance = {
 		session,
+		ask(q: string): void {
+			markBuddyOut();
+			session.ask(q);
+		},
 		destroy() {
 			removeHotkey?.();
 			removeHotkey = null;
@@ -230,6 +314,9 @@ export function init(config: HandymanConfig): void {
 			// Reached only from the mic click or the hotkey — both user gestures —
 			// so unlock the AudioContext for the answer narration that follows.
 			tts?.unlock();
+			// The buddy pops out while we listen, signalling "I'm listening".
+			// Escape-cancel leaves it out (the user can click it home).
+			summonBuddy();
 			listening = true;
 			fab.setListening(true);
 			voice!
@@ -243,7 +330,10 @@ export function init(config: HandymanConfig): void {
 							sttHandle = null;
 							fab.setListening(false);
 							fab.closePanel();
-							if (text) session.ask(text);
+							if (text) {
+								markBuddyOut();
+								session.ask(text);
+							}
 						},
 						// Mid-utterance death (socket dropped, server error frame).
 						onError: (err) => {
@@ -312,6 +402,14 @@ export function init(config: HandymanConfig): void {
 			};
 			document.addEventListener('keydown', onKeyDown, true);
 			removeHotkey = () => document.removeEventListener('keydown', onKeyDown, true);
+			// Advertise the hotkey only now that it actually works — a failed
+			// voice load must not leave a dead "(Alt+H to speak)" promise around.
+			fab.setHotkeyLabel(
+				formatHotkeyLabel(
+					config.hotkey ?? DEFAULT_HOTKEY,
+					typeof navigator !== 'undefined' ? navigator.platform : '',
+				),
+			);
 		}
 	});
 
@@ -323,5 +421,5 @@ export function ask(question: string): void {
 	if (instance === null) {
 		throw new Error('handyman: call Handyman.init(config) before ask()');
 	}
-	instance.session.ask(question);
+	instance.ask(question);
 }

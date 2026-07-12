@@ -35,6 +35,7 @@ widget (packages/core, zero-dep TS)          server (Bun + Hono)
   voice: Gradium TTS/STT over WebSocket (ephemeral tokens via /api/voice-token)
 ```
 
+- **The buddy pointer**: the arrow rests inside the bottom-right launcher until summoned (click the launcher or press the voice hotkey, default `Alt+H`). Out of its house it spring-follows your real mouse as a companion — slightly trailing, never blocking clicks — then takes the lead during a tour, gliding to each target with spring physics (a hand-moved feel, not a rail). Click the launcher to send it home. All motion collapses to instant snaps under `prefers-reduced-motion`.
 - **Element snapping** absorbs grounding error: model coordinates only need to land inside the element; `elementFromPoint` + interactive-ancestor climb does the rest.
 - **Click-through spotlight**: the dim scrim is 4 panels around the cutout, so the highlighted element stays genuinely clickable — your real click advances the tour.
 - **Site scout** (`server/scout/`): an H Agents Platform [multi-agent](https://hub.hcompany.ai/computer-use-agents/multi-agent) manager fans out page-scout + flow-verifier subagents in parallel cloud browsers to pre-map a site's flows.
@@ -49,7 +50,7 @@ cp server/.env.example server/.env   # add HAI_API_KEY + GRADIUM_API_KEY (option
 bun run server           # serves the Acme Invoices demo at http://localhost:3000
 ```
 
-Open http://localhost:3000, click the pointer button bottom-right, and ask *"how do I create an invoice?"*.
+Open http://localhost:3000, click the pointer button bottom-right (or press `Alt+H` to ask by voice), and ask *"how do I create an invoice?"*. The pointer pops out of its house and follows your mouse; ask a question and it takes the lead.
 
 ## Layout
 

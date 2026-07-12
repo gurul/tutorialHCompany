@@ -14,6 +14,18 @@ export interface FabHandle {
 	 * keyboard hotkey so both paths show the same recording indicator.
 	 */
 	setListening(on: boolean): void;
+	/**
+	 * Reflect buddy-out state: when true the FAB shows an "empty home" look
+	 * (glyph dimmed, hollow dashed ring) because the pointer is out roaming,
+	 * and its accessible name says the next press sends the pointer home.
+	 */
+	setBuddyOut(on: boolean): void;
+	/**
+	 * Surface the STT hotkey in the ask-panel placeholder + mic labels. Called
+	 * only once voice actually wires — advertising a dead hotkey is worse than
+	 * advertising none.
+	 */
+	setHotkeyLabel(label: string): void;
 	closePanel(): void;
 	destroy(): void;
 }
@@ -46,11 +58,29 @@ const FAB_CSS = `
 	cursor: pointer;
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
-.handyman-fab .handyman-pointer__svg { width: 24px; height: 24px; }
+.handyman-fab .handyman-pointer__svg {
+	width: 24px;
+	height: 24px;
+	transition: opacity 0.2s ease;
+}
 .handyman-fab .handyman-pointer__svg path {
 	fill: var(--handyman-paper, #fff);
 	stroke: var(--handyman-ink, #16161a);
 }
+/* Empty-home look while the buddy pointer is out roaming: dim the resident
+   glyph and reveal a hollow dashed ring where it usually sits. */
+.handyman-fab::after {
+	content: '';
+	position: absolute;
+	inset: 8px;
+	border-radius: 999px;
+	border: 1.5px dashed var(--handyman-paper, #fff);
+	opacity: 0;
+	transition: opacity 0.2s ease;
+	pointer-events: none;
+}
+.handyman-fab--out .handyman-pointer__svg { opacity: 0.3; }
+.handyman-fab--out::after { opacity: 0.35; }
 /* Recording indicator: accent fill + pulsing ring while listening. */
 .handyman-fab--listening {
 	background: var(--handyman-recording, #e5484d);
@@ -115,6 +145,9 @@ const FAB_CSS = `
 export function createFab(opts: {
 	zIndex: number;
 	onAsk(question: string): void;
+	/** Fired on every FAB button click, BEFORE the panel toggle logic runs
+	 *  (index.ts uses it to summon/dock the buddy pointer). */
+	onFabPress?(): void;
 }): FabHandle {
 	const root = document.createElement('div');
 	root.setAttribute('data-handyman', 'fab');
@@ -145,11 +178,16 @@ export function createFab(opts: {
 	input.placeholder = 'How do I…?';
 	input.setAttribute('aria-label', 'Ask a question');
 
+	// Idle mic label; setHotkeyLabel upgrades both once voice actually wires,
+	// so a failed voice load never advertises a dead hotkey.
+	let micIdleLabel = 'Ask by voice';
+
 	const micBtn = document.createElement('button');
 	micBtn.type = 'button';
 	micBtn.className = 'handyman-ask__btn';
 	micBtn.textContent = '🎤';
-	micBtn.setAttribute('aria-label', 'Ask by voice');
+	micBtn.setAttribute('aria-label', micIdleLabel);
+	micBtn.title = micIdleLabel;
 
 	const submitBtn = document.createElement('button');
 	submitBtn.type = 'submit';
@@ -170,6 +208,9 @@ export function createFab(opts: {
 	}
 
 	fab.addEventListener('click', () => {
+		// Buddy summon/dock runs before the panel toggle so the pointer reacts
+		// to the press even when the click also opens the ask panel.
+		opts.onFabPress?.();
 		const open = panel.style.display !== 'none';
 		panel.style.display = open ? 'none' : 'flex';
 		if (!open) input.focus();
@@ -246,7 +287,21 @@ export function createFab(opts: {
 			fab.classList.toggle('handyman-fab--listening', on);
 			micBtn.classList.toggle('handyman-ask__btn--listening', on);
 			fab.setAttribute('aria-pressed', on ? 'true' : 'false');
-			micBtn.setAttribute('aria-label', on ? 'Stop listening' : 'Ask by voice');
+			micBtn.setAttribute('aria-label', on ? 'Stop listening' : micIdleLabel);
+		},
+		setBuddyOut(on: boolean): void {
+			fab.classList.toggle('handyman-fab--out', on);
+			// The same press summons or docks depending on this state — say which.
+			fab.setAttribute(
+				'aria-label',
+				on ? 'Ask Handyman (pointer is out — press to send it home)' : 'Ask Handyman',
+			);
+		},
+		setHotkeyLabel(label: string): void {
+			input.placeholder = `How do I…? (${label} to speak)`;
+			micIdleLabel = `Ask by voice (${label})`;
+			micBtn.setAttribute('aria-label', micIdleLabel);
+			micBtn.title = micIdleLabel;
 		},
 		closePanel,
 		destroy(): void {

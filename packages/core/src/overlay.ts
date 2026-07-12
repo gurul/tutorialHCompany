@@ -115,7 +115,8 @@ const OVERLAY_CSS = `
 *, *::before, *::after { box-sizing: border-box; }
 /* Light highlight ring on the target — no page dimming, no click blocking.
    A crisp accent outline plus a soft halo so the element reads clearly on any
-   background without hiding the rest of the page. */
+   background without hiding the rest of the page. Slightly longer ease-out
+   curve than the card so the ring trails fluidly instead of snapping. */
 .handyman-spotlight {
 	position: fixed;
 	border-radius: 8px;
@@ -123,7 +124,12 @@ const OVERLAY_CSS = `
 		0 0 0 2px var(--handyman-accent, #4353ff),
 		0 0 0 5px color-mix(in srgb, var(--handyman-accent, #4353ff) 30%, transparent),
 		0 0 14px 2px color-mix(in srgb, var(--handyman-accent, #4353ff) 35%, transparent);
-	transition: left 300ms ease, top 300ms ease, width 300ms ease, height 300ms ease, opacity 200ms ease;
+	transition:
+		left 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		top 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		height 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		opacity 200ms ease;
 	pointer-events: none;
 }
 .handyman-card {
@@ -136,17 +142,52 @@ const OVERLAY_CSS = `
 	background: var(--handyman-paper, #fff);
 	color: var(--handyman-ink, #16161a);
 	border: 1px solid var(--handyman-border, rgba(22, 22, 26, 0.1));
-	border-radius: 12px;
-	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-	padding: 14px 16px;
+	border-radius: 14px;
+	/* Layered shadow: tight contact edge + medium spread + far ambient, so the
+	   card floats instead of stamping a single hard drop on the host page. */
+	box-shadow:
+		0 1px 2px rgba(0, 0, 0, 0.06),
+		0 8px 24px rgba(0, 0, 0, 0.12),
+		0 24px 56px rgba(0, 0, 0, 0.08);
+	padding: 16px;
 	outline: none;
 	font-family: var(--handyman-font, system-ui, sans-serif);
-	transition: left 400ms ease, top 400ms ease, opacity 300ms ease;
+	/* Same ease-out family as the spotlight ring so the two elements tracking
+	   one step move stay in sync; overshoot is reserved for the pointer (real
+	   spring) and would also carry the card past its clamped placement. */
+	transition:
+		left 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		top 420ms cubic-bezier(0.22, 1, 0.36, 1),
+		opacity 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Entrance on hidden → shown only; step-to-step moves use the transition. */
+@keyframes handyman-card-in {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+.handyman-card--enter {
+	animation: handyman-card-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .handyman-card__counter {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	font-size: 11px;
 	color: var(--handyman-ink-40, rgba(22, 22, 26, 0.4));
-	margin-bottom: 4px;
+	margin-bottom: 6px;
+}
+.handyman-dots { display: inline-flex; align-items: center; gap: 4px; }
+.handyman-dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	border: 1px solid var(--handyman-ink-40, rgba(22, 22, 26, 0.4));
+	background: transparent;
+	transition: background 200ms ease, border-color 200ms ease;
+}
+.handyman-dot--done {
+	background: var(--handyman-accent, #4353ff);
+	border-color: var(--handyman-accent, #4353ff);
 }
 .handyman-card__text {
 	font-size: 13px;
@@ -161,6 +202,9 @@ const OVERLAY_CSS = `
 }
 .handyman-card__actions { display: flex; gap: 8px; }
 .handyman-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
 	border: 1px solid var(--handyman-border, rgba(22, 22, 26, 0.15));
 	background: var(--handyman-paper, #fff);
 	color: var(--handyman-ink, #16161a);
@@ -170,20 +214,48 @@ const OVERLAY_CSS = `
 	padding: 6px 10px;
 	cursor: pointer;
 	white-space: nowrap;
+	transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.handyman-btn svg { display: block; }
+.handyman-btn:hover {
+	background: color-mix(in srgb, var(--handyman-ink, #16161a) 6%, var(--handyman-paper, #fff));
+}
+.handyman-btn:active { transform: scale(0.97); }
+.handyman-btn:focus-visible {
+	outline: 2px solid var(--handyman-accent, #4353ff);
+	outline-offset: 2px;
 }
 .handyman-btn--primary {
 	background: var(--handyman-ink, #16161a);
 	color: var(--handyman-paper, #fff);
 	border-color: var(--handyman-ink, #16161a);
 }
-.handyman-btn--ghost { border: none; background: transparent; color: var(--handyman-ink-60, rgba(22, 22, 26, 0.6)); }
-.handyman-btn[aria-pressed="true"] {
+.handyman-btn--primary:hover {
+	background: color-mix(in srgb, var(--handyman-ink, #16161a) 85%, var(--handyman-paper, #fff));
+}
+.handyman-btn--ghost {
+	border-color: transparent;
+	background: transparent;
+	color: var(--handyman-ink-60, rgba(22, 22, 26, 0.6));
+}
+.handyman-btn--ghost:hover {
+	background: color-mix(in srgb, var(--handyman-ink, #16161a) 6%, transparent);
+	color: var(--handyman-ink, #16161a);
+}
+.handyman-btn[aria-pressed="true"],
+.handyman-btn[aria-pressed="true"]:hover {
 	background: var(--handyman-accent, #4353ff);
 	border-color: var(--handyman-accent, #4353ff);
 	color: #fff;
 }
+.handyman-card__hint {
+	margin-top: 10px;
+	font-size: 11px;
+	color: color-mix(in srgb, var(--handyman-ink, #16161a) 45%, transparent);
+}
 @media (prefers-reduced-motion: reduce) {
-	.handyman-spotlight, .handyman-card, .handyman-pointer, .handyman-pointer__bob, .handyman-fab {
+	.handyman-spotlight, .handyman-card, .handyman-pointer, .handyman-pointer__bob, .handyman-fab,
+	.handyman-btn, .handyman-dot {
 		transition-duration: 0ms !important;
 		animation: none !important;
 	}
@@ -242,7 +314,11 @@ export function createOverlay(opts: {
 	doItBtn.type = 'button';
 	doItBtn.className = 'handyman-btn';
 	doItBtn.dataset.handymanBtn = 'doit';
-	doItBtn.textContent = 'Do it for me';
+	// Inline SVG spark (no emoji font dependency on the host page).
+	doItBtn.innerHTML =
+		'<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" fill="currentColor">' +
+		'<path d="M5 0 L6.2 3.8 L10 5 L6.2 6.2 L5 10 L3.8 6.2 L0 5 L3.8 3.8 Z"/></svg>';
+	doItBtn.appendChild(document.createTextNode('Do it for me'));
 	doItBtn.setAttribute('aria-pressed', 'false');
 	doItBtn.addEventListener('click', () => {
 		doItBtn.setAttribute('aria-pressed', 'true');
@@ -268,9 +344,21 @@ export function createOverlay(opts: {
 	actions.appendChild(nextBtn);
 	row.appendChild(skipBtn);
 	row.appendChild(actions);
+
+	// Discoverability footer for the capture-phase shortcuts. aria-hidden: the
+	// card's aria-label already announces counter + instruction; this is a
+	// sighted-user hint only. Hidden in answer mode (arrows don't apply there).
+	const hintEl = document.createElement('div');
+	hintEl.className = 'handyman-card__hint';
+	hintEl.setAttribute('aria-hidden', 'true');
+	// Only advertise keys that do something: back() is a session no-op, so ←
+	// stays out of the hint even though the handler swallows it.
+	hintEl.textContent = '→ next · Esc exit';
+
 	card.appendChild(counterEl);
 	card.appendChild(textEl);
 	card.appendChild(row);
+	card.appendChild(hintEl);
 	shadow.appendChild(card);
 
 	document.body.appendChild(root);
@@ -285,6 +373,45 @@ export function createOverlay(opts: {
 		root.style.display = v ? '' : 'none';
 	}
 	setVisible(false);
+
+	// Entrance rise only on hidden → shown; while visible, step changes glide
+	// via the left/top transition instead. Reflow between class toggles so a
+	// hide→show in the same frame still restarts the keyframes.
+	function playEntrance(): void {
+		if (visible) return;
+		card.classList.remove('handyman-card--enter');
+		void card.offsetWidth;
+		card.classList.add('handyman-card--enter');
+	}
+
+	// "Step 3 of 5" → progress dots + a muted "3/5" label. Anything else (or an
+	// implausibly long tour) falls back to the plain sentence. Presentation
+	// only: the card's aria-label still announces the raw counter string.
+	const COUNTER_RE = /^Step (\d+) of (\d+)$/;
+	function renderCounter(counter: string): void {
+		const m = COUNTER_RE.exec(counter);
+		counterEl.textContent = '';
+		const current = m ? Number(m[1]) : 0;
+		const total = m ? Number(m[2]) : 0;
+		if (!m || total < 1 || total > 12 || current < 1 || current > total) {
+			counterEl.removeAttribute('aria-label');
+			counterEl.textContent = counter;
+			return;
+		}
+		const dots = document.createElement('span');
+		dots.className = 'handyman-dots';
+		dots.setAttribute('aria-hidden', 'true');
+		for (let i = 1; i <= total; i++) {
+			const dot = document.createElement('span');
+			dot.className = i <= current ? 'handyman-dot handyman-dot--done' : 'handyman-dot';
+			dots.appendChild(dot);
+		}
+		const label = document.createElement('span');
+		label.textContent = `${current}/${total}`;
+		counterEl.appendChild(dots);
+		counterEl.appendChild(label);
+		counterEl.setAttribute('aria-label', counter);
+	}
 
 	function applyCut(cut: CutBox): void {
 		spotlight.style.left = `${cut.left}px`;
@@ -391,17 +518,19 @@ export function createOverlay(opts: {
 			const cut = padRect(input.rect);
 			const side = pickSide(cut);
 			applyCut(cut);
-			counterEl.textContent = input.counter;
+			renderCounter(input.counter);
 			counterEl.style.display = '';
 			textEl.textContent = input.instruction;
 			doItBtn.style.display = input.showDoIt ? '' : 'none';
 			doItBtn.setAttribute('aria-pressed', 'false');
 			nextBtn.textContent = 'Next';
 			nextBtn.style.display = '';
+			hintEl.style.display = '';
 			card.setAttribute('aria-label', `${input.counter}: ${input.instruction}`);
 			const pos = cardPlacement(cut, side);
 			card.style.left = `${pos.left}px`;
 			card.style.top = `${pos.top}px`;
+			playEntrance();
 			setVisible(true);
 			card.focus();
 			return { cut, side };
@@ -415,6 +544,7 @@ export function createOverlay(opts: {
 			textEl.textContent = content;
 			doItBtn.style.display = 'none';
 			nextBtn.textContent = 'Done';
+			hintEl.style.display = 'none';
 			card.setAttribute('aria-label', content);
 			const left = clamp(
 				window.innerWidth / 2 - CARD_W / 2,
@@ -423,6 +553,7 @@ export function createOverlay(opts: {
 			);
 			card.style.left = `${left}px`;
 			card.style.top = `${Math.max(MARGIN, window.innerHeight / 2 - CARD_H_EST / 2)}px`;
+			playEntrance();
 			setVisible(true);
 			card.focus();
 		},

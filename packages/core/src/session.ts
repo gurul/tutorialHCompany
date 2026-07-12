@@ -52,13 +52,17 @@ export interface SessionTimings {
 	postActPause: number;
 }
 
+// Tightened 2026-07-11 to cut client-side per-step latency (the model call and
+// narration dominate; these fixed animation/settle waits were padded). Still
+// long enough for the glide to read and the DOM to quiesce; all overridable via
+// deps.timings (tests inject their own). narrationCap is voice-bound — untouched.
 const DEFAULT_TIMINGS: SessionTimings = {
-	settleQuiet: 400,
-	settleFloor: 250,
-	settleCap: 2500,
-	glideMs: 500,
+	settleQuiet: 300,
+	settleFloor: 180,
+	settleCap: 1400,
+	glideMs: 350,
 	narrationCap: 12000,
-	postActPause: 500,
+	postActPause: 250,
 };
 
 interface PersistedSession {

@@ -8,6 +8,12 @@ export interface FabHandle {
 	center(): { x: number; y: number };
 	/** Wire the mic button (voice STT). No-op button until wired. */
 	setMicHandler(fn: () => void): void;
+	/**
+	 * Reflect an active voice-listening state on the FAB (pulse + accent
+	 * colour on the launcher and mic button). Shared by the mic button and the
+	 * keyboard hotkey so both paths show the same recording indicator.
+	 */
+	setListening(on: boolean): void;
 	closePanel(): void;
 	destroy(): void;
 }
@@ -44,6 +50,19 @@ const FAB_CSS = `
 .handyman-fab .handyman-pointer__svg path {
 	fill: var(--handyman-paper, #fff);
 	stroke: var(--handyman-ink, #16161a);
+}
+/* Recording indicator: accent fill + pulsing ring while listening. */
+.handyman-fab--listening {
+	background: var(--handyman-recording, #e5484d);
+	animation: handyman-fab-pulse 1.4s ease-in-out infinite;
+}
+@keyframes handyman-fab-pulse {
+	0% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 0 rgba(229, 72, 77, 0.55); }
+	70% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 12px rgba(229, 72, 77, 0); }
+	100% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 0 rgba(229, 72, 77, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.handyman-fab--listening { animation: none; }
 }
 .handyman-ask {
 	position: fixed;
@@ -85,6 +104,11 @@ const FAB_CSS = `
 .handyman-ask__btn--primary {
 	background: var(--handyman-ink, #16161a);
 	color: var(--handyman-paper, #fff);
+}
+.handyman-ask__btn--listening {
+	background: var(--handyman-recording, #e5484d);
+	color: var(--handyman-paper, #fff);
+	border-color: var(--handyman-recording, #e5484d);
 }
 `;
 
@@ -175,6 +199,12 @@ export function createFab(opts: {
 		},
 		setMicHandler(fn: () => void): void {
 			micHandler = fn;
+		},
+		setListening(on: boolean): void {
+			fab.classList.toggle('handyman-fab--listening', on);
+			micBtn.classList.toggle('handyman-ask__btn--listening', on);
+			fab.setAttribute('aria-pressed', on ? 'true' : 'false');
+			micBtn.setAttribute('aria-label', on ? 'Stop listening' : 'Ask by voice');
 		},
 		closePanel,
 		destroy(): void {

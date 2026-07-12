@@ -27,6 +27,8 @@ declare global {
 				endpoint: string;
 				tts?: boolean;
 				stt?: boolean;
+				hotkey?: string;
+				hotkeyPushToTalk?: boolean;
 				transport?: (path: string, init: TransportInit) => Promise<unknown>;
 			}): void;
 			ask?(q: string): void;
@@ -53,9 +55,15 @@ function isResMsg(d: unknown, id: number): d is ResMsg {
 	const raw = el?.dataset.handymanConfig;
 	if (!raw) return;
 
-	let cfg: { endpoint: string; tts: boolean; stt: boolean };
+	let cfg: {
+		endpoint: string;
+		tts: boolean;
+		stt: boolean;
+		hotkey?: string;
+		hotkeyPushToTalk?: boolean;
+	};
 	try {
-		cfg = JSON.parse(raw) as { endpoint: string; tts: boolean; stt: boolean };
+		cfg = JSON.parse(raw) as typeof cfg;
 	} catch {
 		return;
 	}
@@ -83,10 +91,16 @@ function isResMsg(d: unknown, id: number): d is ResMsg {
 			return;
 		}
 		window.__handymanInjected = true;
+		// This init runs in the page's MAIN world, which is exactly where the
+		// widget's document-level keydown hotkey listener must live to intercept
+		// the host page's keyboard events — content-script isolated worlds don't
+		// share the page's DOM event target. Forward the hotkey config through.
 		window.Handyman.init({
 			endpoint: cfg.endpoint,
 			tts: cfg.tts,
 			stt: cfg.stt,
+			hotkey: cfg.hotkey,
+			hotkeyPushToTalk: cfg.hotkeyPushToTalk,
 			transport,
 		});
 	};

@@ -112,16 +112,15 @@ describe('overlay', () => {
 		expect(cb.onNext).not.toHaveBeenCalled();
 	});
 
-	it('builds 4 click-eater panels around the cutout, leaving the target clear', () => {
+	it('rings the target without dimming or blocking the page', () => {
 		show();
 		// rect 100,100 200x100 + 8px pad → cut 92,92 216x116.
-		const panel = (name: string) =>
-			q(`[data-handyman-panel="${name}"]`) as HTMLElement;
-		expect(panel('top').style.height).toBe('92px');
-		expect(panel('bottom').style.top).toBe('208px');
-		expect(panel('left').style.width).toBe('92px');
-		expect(panel('right').style.left).toBe('308px');
-		// No panel covers the cutout; a real click on the target still lands.
+		const ring = q('.handyman-spotlight') as HTMLElement;
+		expect(ring.style.left).toBe('92px');
+		expect(ring.style.top).toBe('92px');
+		expect(ring.style.width).toBe('216px');
+		expect(ring.style.height).toBe('116px');
+		// No dimming scrim exists; a real click on the target still lands.
 		const clicked = mock(() => {});
 		target.addEventListener('click', clicked);
 		target.click();

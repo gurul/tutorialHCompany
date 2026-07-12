@@ -78,6 +78,28 @@ export interface HandymanConfig {
 	tts?: boolean;
 	/** Enable Gradium STT (ask by voice). */
 	stt?: boolean;
+	/**
+	 * Keyboard combo that toggles voice listening ("push to talk" hotkey),
+	 * so the user can ask by voice without clicking the mic. Default "Alt+KeyH".
+	 * Format: zero or more modifier prefixes — "Ctrl+", "Alt+", "Shift+",
+	 * "Meta+" — followed by a KeyboardEvent.code, e.g. "Alt+KeyH", "Ctrl+Shift+Space",
+	 * "F2". The final segment is matched against `event.code` (physical key),
+	 * not `event.key`, so it is layout-independent. Only wired when `stt` is not
+	 * false and the voice module loads. Ignored if the string is empty/unparseable.
+	 */
+	hotkey?: string;
+	/**
+	 * Hotkey activation style. When true, HOLD the hotkey to talk (listen while
+	 * held, stop on release); when false/omitted, PRESS to start listening and
+	 * press again (or Escape) to cancel — Gradium's semantic VAD ends the
+	 * utterance on its own. Default false (press-to-toggle).
+	 *
+	 * NOTE: true hold-to-talk-with-transcription is not supported by the current
+	 * voice contract (`STTSession` exposes only `stop()`, which cancels without
+	 * flushing the utterance). When true, the hotkey therefore falls back to
+	 * press-to-toggle behaviour. See index.ts for the coordinating comment.
+	 */
+	hotkeyPushToTalk?: boolean;
 	/** Base z-index for overlay layers. Default 2147483000. */
 	zIndex?: number;
 	/** Storage key prefix. Default "handyman". */

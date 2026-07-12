@@ -11,7 +11,13 @@ import { stepJsonSchema, stepSchema } from './schema.ts';
 import { getSession, type ChatMessage } from './sessions.ts';
 
 const MODEL_NAME = 'holo3-1-35b-a3b';
-const MAX_IMAGES_IN_CONTEXT = 3;
+// H docs cap the image budget at 3; we keep 2 (current + one prior). Durable
+// state flows through `note`, so a second image is enough for this
+// human-actuator loop, and one fewer image per turn cuts vision-token latency.
+const MAX_IMAGES_IN_CONTEXT = 2;
+// A single step's JSON is tiny; cap output so an unbounded ceiling can't let the
+// model ramble (enable_thinking is off, so no reasoning tokens are billed here).
+const MAX_OUTPUT_TOKENS = 512;
 
 let client: OpenAI | null = null;
 
@@ -27,22 +33,16 @@ function getClient(): OpenAI {
 
 function systemPrompt(question: string): string {
 	const prompt = [
-		"You are Handyman, a friendly guide who lives inside the user's web page.",
-		'On each turn you receive an <observation> containing a screenshot of the page the user is looking at, and you respond with exactly ONE tool_call.',
-		'',
-		'The HUMAN performs the clicks and typing themselves unless they have explicitly asked you to act for them:',
-		'- Prefer "point": spotlight the element the user should interact with next and tell them what to do. The user\'s own click advances the tour.',
-		'- Use "act_click" / "act_write" only when the user asked you to do it for them (tool outputs will say "agent executed click" in that case).',
-		'- Use "answer" when the user\'s question has been fully addressed; summarize what was accomplished.',
-		'',
-		'Rules:',
-		'- Exactly one tool_call per turn.',
-		'- "instruction" is ONE short imperative sentence addressed to the user; it is spoken aloud (e.g. "Click the New Invoice button in the top right.").',
-		'- "element" is a detailed description of the target UI element.',
-		'- x and y are integers in [0, 1000], normalized to the screenshot, origin top-left.',
-		'- Use "note" to carry forward task-relevant facts you will need on later turns; set it to null when nothing new.',
-		'',
-		`The user's question: "${question}"`,
+		"You are Handyman, a friendly in-page guide. Each turn you get an <observation> with a screenshot; respond with exactly ONE tool_call.",
+		'The HUMAN clicks and types unless they asked you to act for them:',
+		'- Prefer "point": spotlight the next element and tell the user what to do; their own click advances the tour.',
+		'- Use "act_click" / "act_write" only when the user asked you to act for them.',
+		'- Use "answer" when the question is fully addressed; summarize what was accomplished.',
+		'Fields:',
+		'- "instruction": ONE short imperative sentence to the user, spoken aloud (e.g. "Click the New Invoice button, top right.").',
+		'- "element": describe the target UI element. x, y: integers in [0, 1000], normalized to the screenshot, origin top-left.',
+		'- "note": carry forward facts needed on later turns; null when nothing new.',
+		`User's question: "${question}"`,
 	].join('\n');
 	// The model was trained with the schema visible in both the prompt and
 	// structured_outputs — dropping either copy hurts reliability (H docs).
@@ -97,6 +97,8 @@ async function completeOnce(messages: ChatMessage[]): Promise<string> {
 		messages,
 		// Grounding-heavy single steps: temperature 0.0 (H element-localization guidance).
 		temperature: 0.0,
+		// Tight ceiling: one step's structured JSON is small; bounds decode latency.
+		max_tokens: MAX_OUTPUT_TOKENS,
 		// H-specific top-level body fields. The OpenAI JS client serializes the
 		// whole body object, so unknown fields pass through on the wire — the
 		// cast below only silences the SDK's param typing (per H docs' pattern).

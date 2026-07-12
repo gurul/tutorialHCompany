@@ -16,6 +16,9 @@ interface StoredConfig {
 	endpoint?: string;
 	tts?: boolean;
 	stt?: boolean;
+	/** Voice hotkey combo, e.g. "Alt+KeyH". Absent => widget default. */
+	hotkey?: string;
+	hotkeyPushToTalk?: boolean;
 	/** Per-origin enable flag. Absent => enabled (default on). */
 	sites?: Record<string, boolean>;
 }
@@ -62,7 +65,13 @@ async function relay(req: ReqMsg, endpoint: string): Promise<void> {
 	}
 }
 
-function inject(endpoint: string, tts: boolean, stt: boolean): void {
+function inject(cfg: {
+	endpoint: string;
+	tts: boolean;
+	stt: boolean;
+	hotkey?: string;
+	hotkeyPushToTalk?: boolean;
+}): void {
 	const parent = document.head ?? document.documentElement;
 
 	// The widget IIFE (defines window.Handyman). Must run first — async=false
@@ -77,7 +86,7 @@ function inject(endpoint: string, tts: boolean, stt: boolean): void {
 	initScript.id = 'handyman-inject-main';
 	initScript.src = chrome.runtime.getURL('inject-main.js');
 	initScript.async = false;
-	initScript.dataset.handymanConfig = JSON.stringify({ endpoint, tts, stt });
+	initScript.dataset.handymanConfig = JSON.stringify(cfg);
 
 	parent.appendChild(widget);
 	parent.appendChild(initScript);
@@ -88,6 +97,8 @@ async function main(): Promise<void> {
 		'endpoint',
 		'tts',
 		'stt',
+		'hotkey',
+		'hotkeyPushToTalk',
 		'sites',
 	])) as StoredConfig;
 
@@ -105,7 +116,15 @@ async function main(): Promise<void> {
 		void relay(ev.data, endpoint);
 	});
 
-	inject(endpoint, tts, stt);
+	inject({
+		endpoint,
+		tts,
+		stt,
+		...(cfg.hotkey !== undefined ? { hotkey: cfg.hotkey } : {}),
+		...(cfg.hotkeyPushToTalk !== undefined
+			? { hotkeyPushToTalk: cfg.hotkeyPushToTalk }
+			: {}),
+	});
 }
 
 void main();

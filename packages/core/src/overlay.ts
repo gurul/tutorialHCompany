@@ -1,8 +1,8 @@
-// Spotlight overlay engine — port of era-maker's PlatformTour mechanics,
-// framework-free. Key upgrade over the reference: the click-eating scrim is
-// built as 4 panels around the cutout instead of one full-screen sheet, so
-// the spotlit target itself stays interactive (a real user click inside the
-// cutout is a tour event).
+// Overlay engine — a light highlight ring on the target plus a tooltip card.
+// No page dimming and no click-eating scrim: the whole page stays live and
+// interactive, the animated pointer moves to the element, and the card shows
+// the instruction. A real user click on the highlighted element advances the
+// tour (session wires that listener directly on the target, not on a scrim).
 
 export type Side = 'left' | 'right' | 'top' | 'bottom';
 
@@ -103,9 +103,9 @@ function cardPlacement(cut: CutBox, side: Side): { left: number; top: number } {
 
 const OVERLAY_CSS = `
 :host {
-	/* Host stays click-through; the scrim panels below re-enable pointer-events
-	   so the cutout gap passes clicks to the page beneath. Explicit font/box
-	   baseline so nothing inherits from the third-party host page. */
+	/* Host stays click-through so the page underneath is fully interactive;
+	   only the card re-enables pointer-events. Explicit font/box baseline so
+	   nothing inherits from the third-party host page. */
 	pointer-events: none;
 	font-family: var(--handyman-font, system-ui, sans-serif);
 	font-size: 13px;
@@ -113,16 +113,17 @@ const OVERLAY_CSS = `
 	font-weight: 400;
 }
 *, *::before, *::after { box-sizing: border-box; }
-.handyman-panel {
-	position: fixed;
-	background: transparent;
-	pointer-events: auto;
-}
+/* Light highlight ring on the target — no page dimming, no click blocking.
+   A crisp accent outline plus a soft halo so the element reads clearly on any
+   background without hiding the rest of the page. */
 .handyman-spotlight {
 	position: fixed;
-	border-radius: 10px;
-	box-shadow: 0 0 0 9999px rgba(20, 20, 20, 0.55);
-	transition: left 400ms ease, top 400ms ease, width 400ms ease, height 400ms ease, opacity 400ms ease;
+	border-radius: 8px;
+	box-shadow:
+		0 0 0 2px var(--handyman-accent, #4353ff),
+		0 0 0 5px color-mix(in srgb, var(--handyman-accent, #4353ff) 30%, transparent),
+		0 0 14px 2px color-mix(in srgb, var(--handyman-accent, #4353ff) 35%, transparent);
+	transition: left 300ms ease, top 300ms ease, width 300ms ease, height 300ms ease, opacity 200ms ease;
 	pointer-events: none;
 }
 .handyman-card {
@@ -179,7 +180,7 @@ const OVERLAY_CSS = `
 	color: #fff;
 }
 @media (prefers-reduced-motion: reduce) {
-	.handyman-spotlight, .handyman-card, .handyman-pointer, .handyman-pointer__bob, .handyman-fab, .handyman-panel {
+	.handyman-spotlight, .handyman-card, .handyman-pointer, .handyman-pointer__bob, .handyman-fab {
 		transition-duration: 0ms !important;
 		animation: none !important;
 	}
@@ -203,22 +204,8 @@ export function createOverlay(opts: {
 	style.textContent = OVERLAY_CSS;
 	shadow.appendChild(style);
 
-	// 4 transparent click-eater panels around the cutout. The visual dim
-	// comes from the spotlight's giant box-shadow, so the panels stay
-	// invisible and only exist to swallow clicks outside the target.
-	const panels = (['top', 'bottom', 'left', 'right'] as const).map((name) => {
-		const p = document.createElement('div');
-		p.className = 'handyman-panel';
-		p.dataset.handymanPanel = name;
-		p.style.zIndex = String(zIndex);
-		p.addEventListener('click', (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-		});
-		shadow.appendChild(p);
-		return p;
-	});
-
+	// Highlight ring only — no click-eating panels, so the page underneath
+	// stays fully interactive.
 	const spotlight = document.createElement('div');
 	spotlight.className = 'handyman-spotlight';
 	spotlight.setAttribute('aria-hidden', 'true');
@@ -296,34 +283,12 @@ export function createOverlay(opts: {
 	}
 	setVisible(false);
 
-	function layoutPanels(cut: CutBox): void {
-		const vw = window.innerWidth;
-		const vh = window.innerHeight;
-		const right = cut.left + cut.width;
-		const bottom = cut.top + cut.height;
-		const geo: Record<string, [number, number, number, number]> = {
-			top: [0, 0, vw, Math.max(0, cut.top)],
-			bottom: [0, bottom, vw, Math.max(0, vh - bottom)],
-			left: [0, cut.top, Math.max(0, cut.left), cut.height],
-			right: [right, cut.top, Math.max(0, vw - right), cut.height],
-		};
-		for (const p of panels) {
-			const [x, y, w, h] = geo[p.dataset.handymanPanel!]!;
-			p.style.left = `${x}px`;
-			p.style.top = `${y}px`;
-			p.style.width = `${w}px`;
-			p.style.height = `${h}px`;
-			p.style.display = '';
-		}
-	}
-
 	function applyCut(cut: CutBox): void {
 		spotlight.style.left = `${cut.left}px`;
 		spotlight.style.top = `${cut.top}px`;
 		spotlight.style.width = `${cut.width}px`;
 		spotlight.style.height = `${cut.height}px`;
 		spotlight.style.display = '';
-		layoutPanels(cut);
 	}
 
 	function padRect(r: DOMRect): CutBox {
@@ -438,7 +403,6 @@ export function createOverlay(opts: {
 			currentEl = null;
 			onAnswerDone = onDone;
 			spotlight.style.display = 'none';
-			for (const p of panels) p.style.display = 'none';
 			counterEl.style.display = 'none';
 			textEl.textContent = content;
 			doItBtn.style.display = 'none';

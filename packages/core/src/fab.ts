@@ -410,7 +410,7 @@ export function createFab(opts: {
 			statusPill.style.display = '';
 		},
 		setHotkeyLabel(label: string): void {
-			input.placeholder = `How do I…? (${label} to speak)`;
+			input.placeholder = `How do I…? (hold ${label} to talk)`;
 			micIdleLabel = `Ask by voice (${label})`;
 			micBtn.setAttribute('aria-label', micIdleLabel);
 			micBtn.title = micIdleLabel;

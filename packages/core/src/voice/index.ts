@@ -15,7 +15,14 @@ export interface TTSPlayer {
 }
 
 export interface STTSession {
+  /** Cancel: tear down without emitting a transcript. */
   stop(): void;
+  /**
+   * Finish: stop capturing, tell the server the stream is over, wait briefly
+   * for the tail of the transcript, then emit onFinal with whatever was heard
+   * (possibly ""). Push-to-talk release path.
+   */
+  finish(): void;
 }
 
 export interface STTCallbacks {

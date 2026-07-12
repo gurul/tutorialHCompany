@@ -143,11 +143,17 @@ export async function startSTT(
   let socketOpen = false;
   let transcript = "";
   let silenceMs = 0;
+  let eosSent = false;
+  let finishTimer: ReturnType<typeof setTimeout> | null = null;
 
   function teardown(): void {
     if (done) return;
     done = true;
     socketOpen = false;
+    if (finishTimer !== null) {
+      clearTimeout(finishTimer);
+      finishTimer = null;
+    }
     stopCapture?.();
     for (const track of stream.getTracks()) track.stop();
     socket?.close();
@@ -156,12 +162,31 @@ export async function startSTT(
 
   function finish(): void {
     if (done) return;
-    if (socketOpen) {
+    if (socketOpen && !eosSent) {
+      eosSent = true;
       socket?.send(JSON.stringify({ type: "end_of_stream" }));
     }
     const finalText = transcript.trim();
     teardown();
     opts.onFinal(finalText);
+  }
+
+  /**
+   * Push-to-talk release: stop feeding audio and signal end_of_stream, but
+   * DON'T emit yet — transcript fragments for the last words are still in
+   * flight. The server's end_of_stream reply (or a timeout, if it never
+   * comes) delivers the final via finish().
+   */
+  function requestFinish(): void {
+    if (done || finishTimer !== null) return;
+    stopCapture?.();
+    stopCapture = null;
+    for (const track of stream.getTracks()) track.stop();
+    if (socketOpen && !eosSent) {
+      eosSent = true;
+      socket?.send(JSON.stringify({ type: "end_of_stream" }));
+    }
+    finishTimer = setTimeout(finish, 1500);
   }
 
   function onServerMessage(data: string): void {
@@ -258,6 +283,9 @@ export async function startSTT(
   return {
     stop(): void {
       teardown();
+    },
+    finish(): void {
+      requestFinish();
     },
   };
 }

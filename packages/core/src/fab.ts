@@ -36,7 +36,7 @@ export interface FabHandle {
 	destroy(): void;
 }
 
-const FAB_SIZE = 56;
+export const FAB_SIZE = 56;
 
 const FAB_CSS = `
 :host {
@@ -69,6 +69,21 @@ const FAB_CSS = `
 	height: 27px;
 	color: var(--handyman-paper, #fff);
 	transition: opacity 0.2s ease;
+}
+/* Wave hello on hover — rocked around the wrist (bottom-center), not the
+   glyph center, so it reads as a wave rather than a wobble. Skipped while
+   the hand is out roaming (a dimmed empty home shouldn't wave). */
+.handyman-fab:hover:not(.handyman-fab--out) .handyman-hand-glyph {
+	animation: handyman-wave 0.9s ease-in-out infinite;
+	transform-origin: 50% 88%;
+}
+@keyframes handyman-wave {
+	0%, 100% { transform: rotate(0deg); }
+	25% { transform: rotate(-16deg); }
+	75% { transform: rotate(14deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.handyman-fab:hover:not(.handyman-fab--out) .handyman-hand-glyph { animation: none; }
 }
 /* Empty-home look while the buddy pointer is out roaming: dim the resident
    glyph and reveal a hollow dashed ring where it usually sits. */
@@ -395,7 +410,7 @@ export function createFab(opts: {
 			statusPill.style.display = '';
 		},
 		setHotkeyLabel(label: string): void {
-			input.placeholder = `How do I…? (${label} to speak)`;
+			input.placeholder = `How do I…? (hold ${label} to talk)`;
 			micIdleLabel = `Ask by voice (${label})`;
 			micBtn.setAttribute('aria-label', micIdleLabel);
 			micBtn.title = micIdleLabel;

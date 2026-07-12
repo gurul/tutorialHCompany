@@ -4,7 +4,7 @@
 import type { HandymanConfig } from './types.ts';
 import { createOverlay } from './overlay.ts';
 import { createPointer } from './pointer.ts';
-import { createFab } from './fab.ts';
+import { createFab, FAB_SIZE } from './fab.ts';
 import { captureViewport } from './capture.ts';
 import { createSession, type SessionHandle } from './session.ts';
 import { ensureBrandFont } from './fonts.ts';
@@ -109,7 +109,7 @@ interface VoiceModule {
 		opts: { onFinal(text: string): void; onError?(err: unknown): void },
 		transport?: VoiceTransport,
 		socketFactory?: VoiceSocketFactory,
-	): Promise<{ stop(): void }>;
+	): Promise<{ stop(): void; finish(): void }>;
 }
 
 /**
@@ -211,6 +211,31 @@ export function init(config: HandymanConfig): void {
 	function markBuddyOut(): void {
 		buddyOut = true;
 		fab.setBuddyOut(true);
+	}
+
+	/** While the mic is live the buddy points at the pulsing launcher instead
+	 *  of trailing the mouse — the answer to "I pressed the hotkey, now what?"
+	 *  is drawn on screen: the hand points at the thing that's listening. */
+	function pointBuddyAtLauncher(): void {
+		const s = session.getState();
+		if (s !== 'idle' && s !== 'done') return; // tour guidance outranks buddy
+		const c = fab.center();
+		pointer.show();
+		pointer.pointTo(
+			{ left: c.x - FAB_SIZE / 2, top: c.y - FAB_SIZE / 2, width: FAB_SIZE, height: FAB_SIZE },
+			'left',
+		);
+		fab.setBuddyOut(true);
+		buddyOut = true;
+	}
+
+	/** Listening ended without a question: stop pointing at the launcher and
+	 *  fall back to trailing the mouse (the pre-existing cancel behavior). */
+	function resumeBuddyFollow(): void {
+		const s = session.getState();
+		if (s !== 'idle' && s !== 'done') return;
+		if (!buddyOut) return;
+		pointer.startFollow();
 	}
 
 	const fab = createFab({
@@ -325,18 +350,24 @@ export function init(config: HandymanConfig): void {
 		// Shared listen path: the FAB mic button and the keyboard hotkey both
 		// drive this, so click and hotkey behave identically (same startSTT /
 		// onFinal wiring, same FAB recording indicator).
-		let sttHandle: { stop(): void } | null = null;
+		let sttHandle: { stop(): void; finish(): void } | null = null;
 		let listening = false;
+		// Hotkey released while startSTT was still connecting (token + mic take
+		// a beat) — finish as soon as the session lands instead of dropping it.
+		let finishRequested = false;
 
-		function startListening(): void {
+		function startListening(hint = 'Listening — ask out loud'): void {
 			if (listening) return;
 			// Reached only from the mic click or the hotkey — both user gestures —
 			// so unlock the AudioContext for the answer narration that follows.
 			tts?.unlock();
-			// The buddy pops out while we listen, signalling "I'm listening".
-			// Escape-cancel leaves it out (the user can click it home).
-			summonBuddy();
+			// The buddy points at the pulsing launcher while we listen, and the
+			// pill says what to do — the hotkey otherwise gives no clue that the
+			// next move is simply to talk.
+			pointBuddyAtLauncher();
+			fab.setWorking(hint);
 			listening = true;
+			finishRequested = false;
 			fab.setListening(true);
 			voice!
 				.startSTT(
@@ -351,7 +382,11 @@ export function init(config: HandymanConfig): void {
 							fab.closePanel();
 							if (text) {
 								markBuddyOut();
+								// session.ask flips the pill to "Analyzing…" synchronously.
 								session.ask(text);
+							} else {
+								fab.setWorking(null);
+								resumeBuddyFollow();
 							}
 						},
 						// Mid-utterance death (socket dropped, server error frame).
@@ -360,6 +395,8 @@ export function init(config: HandymanConfig): void {
 							listening = false;
 							sttHandle = null;
 							fab.setListening(false);
+							fab.setWorking(null);
+							resumeBuddyFollow();
 							listenFailed(err);
 						},
 					},
@@ -369,13 +406,23 @@ export function init(config: HandymanConfig): void {
 				.then((handle) => {
 					// A cancel that raced the await already flipped `listening`; if so,
 					// tear the just-opened session straight back down.
-					if (!listening) handle.stop();
-					else sttHandle = handle;
+					if (!listening) {
+						handle.stop();
+						return;
+					}
+					sttHandle = handle;
+					// Hotkey already released mid-connect: flush now.
+					if (finishRequested) {
+						finishRequested = false;
+						handle.finish();
+					}
 				})
 				.catch((err: unknown) => {
 					listening = false;
 					sttHandle = null;
 					fab.setListening(false);
+					fab.setWorking(null);
+					resumeBuddyFollow();
 					listenFailed(err);
 				});
 		}
@@ -383,11 +430,24 @@ export function init(config: HandymanConfig): void {
 		function stopListening(): void {
 			if (!listening) return;
 			listening = false;
+			finishRequested = false;
 			fab.setListening(false);
+			fab.setWorking(null);
+			resumeBuddyFollow();
 			sttHandle?.stop();
 			sttHandle = null;
 		}
 		stopVoiceNow = stopListening;
+
+		/** Push-to-talk release: flush the utterance and auto-ask. onFinal does
+		 *  the rest (empty transcript → clean cancel). */
+		function finishListening(): void {
+			if (!listening) return;
+			// Instant feedback on release; an empty final clears it in onFinal.
+			fab.setWorking('Analyzing…');
+			if (sttHandle) sttHandle.finish();
+			else finishRequested = true;
+		}
 
 		function toggleListening(): void {
 			if (listening) stopListening();
@@ -396,11 +456,12 @@ export function init(config: HandymanConfig): void {
 
 		fab.setMicHandler(toggleListening);
 
-		// Keyboard hotkey. Push-to-talk (hold-to-talk-with-transcription) is not
-		// supported by the voice contract — STTSession exposes only stop(), which
-		// cancels the utterance without flushing a transcript (only VAD/end_of_stream
-		// flush, and neither is exposed). So hotkeyPushToTalk falls back to
-		// press-to-toggle; no keyup handler is wired.
+		// Keyboard hotkey — push-to-talk: hold to speak, release to ask.
+		// keydown starts the listen; keyup finish()es the STT session, which
+		// flushes the transcript tail and auto-submits via onFinal. A quick tap
+		// yields an empty transcript and cancels cleanly. Gradium's semantic VAD
+		// still ends the utterance on its own if the user keeps holding after
+		// they stop talking — release then no-ops (listening already false).
 		const hotkey = parseHotkey(config.hotkey ?? DEFAULT_HOTKEY);
 		if (hotkey !== null) {
 			const onKeyDown = (e: KeyboardEvent): void => {
@@ -412,13 +473,23 @@ export function init(config: HandymanConfig): void {
 					return;
 				}
 				if (!hotkeyMatches(e, hotkey)) return;
-				if (e.repeat) return; // ignore key auto-repeat
+				if (e.repeat) return; // ignore key auto-repeat while held
 				// Capture-phase + preventDefault/stopPropagation so the host page's
 				// own shortcuts never see the combo (same rationale as the overlay's
 				// capture-phase keyboard handling).
 				e.preventDefault();
 				e.stopPropagation();
-				toggleListening();
+				startListening('Listening — release to ask');
+			};
+			// Release matches on the bare key code — modifiers often lift a beat
+			// before the main key (⌥ up, then H up), so requiring the full combo
+			// on keyup would randomly miss the release.
+			const onKeyUp = (e: KeyboardEvent): void => {
+				if (e.code !== hotkey.code) return;
+				if (!listening) return;
+				e.preventDefault();
+				e.stopPropagation();
+				finishListening();
 			};
 			// Must be on WINDOW, not document: the FAB's key-containment listener
 			// (fab.ts onWidgetKey) is a window-capture handler that stopPropagation()s
@@ -427,7 +498,11 @@ export function init(config: HandymanConfig): void {
 			// placeholder advertises it. stopPropagation doesn't silence other
 			// listeners on the SAME target, so a window-capture listener still runs.
 			window.addEventListener('keydown', onKeyDown, true);
-			removeHotkey = () => window.removeEventListener('keydown', onKeyDown, true);
+			window.addEventListener('keyup', onKeyUp, true);
+			removeHotkey = () => {
+				window.removeEventListener('keydown', onKeyDown, true);
+				window.removeEventListener('keyup', onKeyUp, true);
+			};
 			// Advertise the hotkey only now that it actually works — a failed
 			// voice load must not leave a dead "(Alt+H to speak)" promise around.
 			fab.setHotkeyLabel(

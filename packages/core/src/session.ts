@@ -32,8 +32,10 @@ export type SessionState =
 
 /** TTS hook points — index.ts wires voice onto these. */
 export interface SessionCallbacks {
-	onStepInstruction?(text: string): void;
-	onAnswer?(text: string): void;
+	/** Return a promise that resolves when narration finishes; the agent
+	 *  loop awaits it (capped) before acting so it never talks over itself. */
+	onStepInstruction?(text: string): void | Promise<void>;
+	onAnswer?(text: string): void | Promise<void>;
 	onStateChange?(state: SessionState): void;
 	onError?(err: unknown): void;
 }
@@ -44,6 +46,10 @@ export interface SessionTimings {
 	settleFloor: number;
 	settleCap: number;
 	glideMs: number;
+	/** Max time to wait for narration before acting anyway (stuck TTS guard). */
+	narrationCap: number;
+	/** Beat after an agent action so the user sees the result land. */
+	postActPause: number;
 }
 
 const DEFAULT_TIMINGS: SessionTimings = {
@@ -51,6 +57,8 @@ const DEFAULT_TIMINGS: SessionTimings = {
 	settleFloor: 250,
 	settleCap: 2500,
 	glideMs: 500,
+	narrationCap: 12000,
+	postActPause: 500,
 };
 
 interface PersistedSession {
@@ -65,6 +73,8 @@ interface PersistedSession {
 	/** Where the tour STARTED — multi-page tours must cache under the page
 	 *  the user asks on, not wherever the answer step lands. */
 	origin_path?: string;
+	/** "Do it for me" toggle, so autopilot survives full page loads. */
+	act_mode?: boolean;
 	/** Replay only: the cached step list and cursor. */
 	replay_steps?: Step[];
 	replay_index?: number;
@@ -216,6 +226,7 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			question,
 			mode: replaySteps === null ? 'live' : 'replay',
 			step_number: stepNumber,
+			act_mode: actMode,
 		};
 		if (replaySteps !== null) {
 			data.replay_steps = replaySteps;
@@ -269,6 +280,21 @@ export function createSession(deps: SessionDeps): SessionHandle {
 		} catch {
 			// ignore
 		}
+	}
+
+	/** Fire the narration callback and hand back a promise that settles when
+	 *  the sentence has been spoken (or immediately if voice is off). */
+	function narrate(text: string): Promise<void> {
+		const r = cb.onStepInstruction?.(text);
+		return r instanceof Promise ? r : Promise.resolve();
+	}
+
+	/** Resolve when p settles OR the cap elapses, whichever comes first. */
+	function capped(p: Promise<void>, ms: number): Promise<void> {
+		return Promise.race([
+			p.catch(() => {}),
+			new Promise<void>((res) => setTimeout(res, ms)),
+		]);
 	}
 
 	function detachTargetListener(): void {
@@ -462,7 +488,8 @@ export function createSession(deps: SessionDeps): SessionHandle {
 		});
 		pointer.show();
 		pointer.pointTo(cut, side);
-		cb.onStepInstruction?.(tc.instruction);
+		// Guide mode: narrate, but the user paces the step, so don't await.
+		void narrate(tc.instruction);
 		setState('waiting_user');
 
 		// A real user click inside the cutout advances the tour — the
@@ -512,10 +539,14 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			counter: counterText(),
 			showDoIt: false,
 		});
-		cb.onStepInstruction?.(tc.instruction);
+		const narration = narrate(tc.instruction);
 		pointer.show();
 		pointer.pointTo(cut, side);
-		await new Promise((r) => setTimeout(r, timings.glideMs));
+		// Glide while the sentence is spoken, then act — never mid-narration.
+		await Promise.all([
+			new Promise((r) => setTimeout(r, timings.glideMs)),
+			capped(narration, timings.narrationCap),
+		]);
 		if (myGen !== gen) return;
 		await pointer.press();
 		if (myGen !== gen) return;
@@ -529,6 +560,9 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			}
 		}
 
+		// Let the user register the result before the next step begins.
+		await new Promise((r) => setTimeout(r, timings.postActPause));
+		if (myGen !== gen) return;
 		await settle();
 		if (myGen !== gen) return;
 		if (replaySteps !== null) {
@@ -652,7 +686,7 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			stepNumber = persisted.step_number ?? 0;
 			recorded = persisted.recorded ?? [];
 			originPath = persisted.origin_path ?? '';
-			actMode = false;
+			actMode = persisted.act_mode ?? false;
 			if (persisted.mode === 'replay' && persisted.replay_steps !== undefined) {
 				replaySteps = persisted.replay_steps;
 				replayIndex = persisted.replay_index ?? 0;
@@ -688,6 +722,7 @@ export function createSession(deps: SessionDeps): SessionHandle {
 			},
 			doIt(): void {
 				actMode = true;
+				persist();
 				if (
 					state === 'waiting_user' &&
 					currentStep !== null &&

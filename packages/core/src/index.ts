@@ -75,13 +75,15 @@ export function init(config: HandymanConfig): void {
 		fabCenter: () => fab.center(),
 		capture: captureViewport,
 		callbacks: {
+			// Return the speak() promise so the agent loop can await narration
+			// before it acts. Resolves immediately when TTS is off/absent.
 			onStepInstruction: (text) => {
 				tts?.stop();
-				void tts?.speak(text).catch(() => {});
+				return tts?.speak(text).catch(() => {}) ?? Promise.resolve();
 			},
 			onAnswer: (text) => {
 				tts?.stop();
-				void tts?.speak(text).catch(() => {});
+				return tts?.speak(text).catch(() => {}) ?? Promise.resolve();
 			},
 		},
 	});

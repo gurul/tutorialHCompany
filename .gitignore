@@ -17,3 +17,4 @@ build/
 apps/video/out/
 apps/video/node_modules/
 .remotion/
+apps/video/public/music.mp3

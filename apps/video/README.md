@@ -21,11 +21,11 @@ swap recordings. If the new footage's length differs, adjust the
 
 ## Music
 
-The piece is scored for one ~104 BPM minimal electronic track (structure in
-`DESIGN.md` → storyboard's music direction: sparse/tense to 14 s, full drop
-on the wordmark, ducked under the demo, resolve into the end card's
-stillness). Drop a licensed track at `public/music.mp3` and uncomment the
-`<Audio>` line in `src/HandymanLaunch.tsx`.
+`src/HandymanLaunch.tsx` plays `public/music.mp3` through a frame-driven
+volume envelope: fade-in, full under the motion scenes, ducked to 35% while
+the demo's own audio plays, silent through the end card. The track itself is
+**not in git** (licensed audio — Epidemic Sound "Hold You", Andre Aguado);
+put your licensed copy at `public/music.mp3` to render with sound.
 
 ## Layout
 

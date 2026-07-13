@@ -131,7 +131,7 @@ Widget options, passed to `Handyman.init(config)`:
 
 H Company Holo3 and the Agents Platform (hai-agents SDK), Gradium TTS/STT, Bun, Hono, TypeScript, and Chrome MV3. The widget's only runtime dependency is [snapdom](https://github.com/zumerlab/snapdom), used for in-page rasterization on the embed path.
 
-Hand pose engine adapted from Era's EraHand cursor. Figtree is used under the SIL Open Font License.
+Figtree is used under the SIL Open Font License.
 
 ## License
 

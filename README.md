@@ -4,6 +4,10 @@
   <img src="assets/handyman.png" alt="Handyman: every website should teach itself" width="100%">
 </p>
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=Z195n8YuVeU"><b>▶ Watch the launch video</b></a>
+</p>
+
 **Every website should teach itself.** A guided tour for any site, with zero authored steps.
 
 Software changes constantly and the help never keeps up. Docs, screenshots, and scripted product tours are written once, about a version that no longer exists, and they cannot see the page you are on. Handyman looks at the same screen you do: it screenshots the live page, asks a computer-use model to plan and ground the next action, then points an animated hand at the real element and narrates it aloud. Guidance is generated from the interface as it renders right now, so it cannot go stale, and it works on sites nobody wrote a tour for.

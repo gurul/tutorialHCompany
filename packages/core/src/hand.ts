@@ -1,16 +1,13 @@
-// Hand art engine — vendored from era-maker's EraHand cursor bootstrap
-// (era-maker public/era-hand-bootstrap.js), reduced to what handyman needs:
-// the finger renderer, the pose data, and pose-to-pose interpolation.
+// Hand art engine: the finger renderer, the pose data, and pose-to-pose
+// interpolation for the buddy hand. Deliberately narrow — handyman's own
+// spring loop (pointer.ts) owns position/rotation, and the session owns when
+// poses change. This module only paints a hand into a canvas and animates
+// between poses.
 //
-// Deliberately NOT vendored: global mousemove tracking, native-cursor hiding,
-// hover rules, and press listeners — handyman's own spring loop (pointer.ts)
-// owns position/rotation, and the session owns when poses change. This module
-// only paints a hand into a canvas and animates between poses.
-//
-// Colors are NOT the Era brand palette. Each finger takes a tint of the
-// widget's single accent color (--handyman-accent), darkest on the index (the
-// finger that does the pointing), lightening toward the pinky — so the hand
-// reads as one themed object on any host page instead of a rainbow.
+// Each finger takes a tint of the widget's single accent color
+// (--handyman-accent), darkest on the index (the finger that does the
+// pointing), lightening toward the pinky — so the hand reads as one themed
+// object on any host page instead of a rainbow.
 
 export type HandPose = 'open' | 'pointer' | 'grab' | 'excited';
 
@@ -45,48 +42,52 @@ interface PoseDef {
 	refSize: number;
 }
 
-// Pose geometry copied verbatim from the reference engine (colors stripped —
-// they were the brand palette; ours are derived below).
+// Pose geometry: the "soft-rounded" skin (design/hand-styles/soft-rounded.js,
+// picked in design review) — round caps, ~25% thinner strokes than the
+// first-generation shape, longer fingers, gentler fan, subtle outward bows.
+// open/pointer are the reviewed data verbatim; grab keeps the original's
+// fist coordinates restyled to the soft widths; excited is soft-rounded open
+// with the tips splayed outward by the same deltas the original excited used.
 const POSES: Record<HandPose, PoseDef> = {
 	open: {
 		fingers: {
-			thumb: { tipX: -238.854, tipY: 152.503, baseX: -62.614, baseY: 302.668, pipX: -169.183, pipY: 194.34, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			index: { tipX: -169.76, tipY: -149.304, baseX: -58.299, baseY: 53.64, pipX: -103.419, pipY: -18.413, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			middle: { tipX: -49.209, tipY: -205.985, baseX: 19.092, baseY: 15.25, pipX: -5.23, pipY: -54.824, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			ring: { tipX: 76.116, tipY: -191.248, baseX: 100.978, baseY: 38.951, pipX: 99.627, pipY: -48.899, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			pinky: { tipX: 209.528, tipY: -122.559, baseX: 173.022, baseY: 106.083, pipX: 200.028, pipY: 2.289, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
+			thumb: { tipX: -248, tipY: 128, baseX: -58, baseY: 285, pipX: -166, pipY: 222, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.35 },
+			index: { tipX: -160, tipY: -190, baseX: -64, baseY: 56, pipX: -119, pipY: -65, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.22 },
+			middle: { tipX: -32, tipY: -236, baseX: 12, baseY: 20, pipX: -18, pipY: -108, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.2 },
+			ring: { tipX: 80, tipY: -212, baseX: 95, baseY: 42, pipX: 98, pipY: -84, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.25 },
+			pinky: { tipX: 212, tipY: -110, baseX: 162, baseY: 110, pipX: 202, pipY: 3, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.35 },
 		},
-		refSize: 855.96,
+		refSize: 855,
 	},
 	pointer: {
 		fingers: {
-			thumb: { tipX: -152.091, tipY: -3.407, baseX: -102.522, baseY: 214.24, pipX: -125.694, pipY: 71.348, rectWidth: 111.61, rectBezOrCircle: 0, rectOrBez: 0 },
-			index: { tipX: -242.031, tipY: -197.651, baseX: -132.216, baseY: -3.311, pipX: -173.673, pipY: -65.963, rectWidth: 111.61, rectBezOrCircle: 0, rectOrBez: 0 },
-			middle: { tipX: -57.603, tipY: 22.953, baseX: 160.907, baseY: -31.083, pipX: -60.436, pipY: -93.32, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0 },
-			ring: { tipX: 4.455, tipY: 40.398, baseX: 196.919, baseY: -76.324, pipX: 23.077, pipY: -80.125, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0.297 },
-			pinky: { tipX: 62.533, tipY: 69.58, baseX: 261.649, baseY: -35.394, pipX: 93.074, pipY: -21.66, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0.433 },
+			thumb: { tipX: -155, tipY: 8, baseX: -98, baseY: 218, pipX: -142, pipY: 108, rectWidth: 85, rectBezOrCircle: 0, rectOrBez: 0.35 },
+			index: { tipX: -258, tipY: -212, baseX: -130, baseY: 0, pipX: -206, pipY: -100, rectWidth: 85, rectBezOrCircle: 0, rectOrBez: 0.3 },
+			middle: { tipX: -56, tipY: 24, baseX: 158, baseY: -30, pipX: -60, pipY: -93, rectWidth: 85, rectBezOrCircle: 0.999, rectOrBez: 0 },
+			ring: { tipX: 6, tipY: 42, baseX: 194, baseY: -74, pipX: 23, pipY: -80, rectWidth: 85, rectBezOrCircle: 0.999, rectOrBez: 0 },
+			pinky: { tipX: 64, tipY: 70, baseX: 258, baseY: -34, pipX: 93, pipY: -22, rectWidth: 85, rectBezOrCircle: 0.999, rectOrBez: 0 },
 		},
-		refSize: 841.32,
+		refSize: 841,
 	},
 	grab: {
 		fingers: {
-			thumb: { tipX: -148.335, tipY: -11.708, baseX: -144.923, baseY: 208.086, pipX: -176.493, pipY: 47.934, rectWidth: 109.91, rectBezOrCircle: 0, rectOrBez: 0.999 },
-			index: { tipX: -40.853, tipY: 81.727, baseX: -159.039, baseY: -101.521, pipX: -78.685, pipY: -39.757, rectWidth: 109.027, rectBezOrCircle: 0.999, rectOrBez: 0 },
-			middle: { tipX: 8.178, tipY: 75.652, baseX: -35.732, baseY: -145.116, pipX: -9.053, pipY: -64.016, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0 },
-			ring: { tipX: 57.068, tipY: 67.058, baseX: 94.457, baseY: -154.907, pipX: 65.433, pipY: -63.293, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0.297 },
-			pinky: { tipX: 100.636, tipY: 65.322, baseX: 268.541, baseY: -84.593, pipX: 133.247, pipY: -28.291, rectWidth: 112.546, rectBezOrCircle: 0.999, rectOrBez: 0.433 },
+			thumb: { tipX: -148, tipY: -12, baseX: -145, baseY: 208, pipX: -176, pipY: 48, rectWidth: 85, rectBezOrCircle: 0, rectOrBez: 0.7 },
+			index: { tipX: -41, tipY: 82, baseX: -159, baseY: -102, pipX: -79, pipY: -40, rectWidth: 88, rectBezOrCircle: 0.999, rectOrBez: 0 },
+			middle: { tipX: 8, tipY: 76, baseX: -36, baseY: -145, pipX: -9, pipY: -64, rectWidth: 88, rectBezOrCircle: 0.999, rectOrBez: 0 },
+			ring: { tipX: 57, tipY: 67, baseX: 94, baseY: -155, pipX: 65, pipY: -63, rectWidth: 88, rectBezOrCircle: 0.999, rectOrBez: 0 },
+			pinky: { tipX: 101, tipY: 65, baseX: 269, baseY: -85, pipX: 133, pipY: -28, rectWidth: 88, rectBezOrCircle: 0.999, rectOrBez: 0 },
 		},
-		refSize: 765.22,
+		refSize: 765,
 	},
 	excited: {
 		fingers: {
-			thumb: { tipX: -253.585, tipY: 171.748, baseX: -62.614, baseY: 302.668, pipX: -179.922, pipY: 206.073, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			index: { tipX: -185.34, tipY: -139.933, baseX: -58.299, baseY: 53.64, pipX: -108.934, pipY: -14.651, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			middle: { tipX: -49.209, tipY: -205.985, baseX: 19.092, baseY: 15.25, pipX: -5.23, pipY: -54.824, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			ring: { tipX: 94.254, tipY: -192.489, baseX: 100.978, baseY: 38.951, pipX: 106.524, pipY: -48.734, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
-			pinky: { tipX: 233.228, tipY: -117.491, baseX: 173.022, baseY: 106.083, pipX: 210.729, pipY: 5.681, rectWidth: 115.769, rectBezOrCircle: 0, rectOrBez: 0 },
+			thumb: { tipX: -263, tipY: 147, baseX: -58, baseY: 285, pipX: -177, pipY: 234, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.3 },
+			index: { tipX: -176, tipY: -181, baseX: -64, baseY: 56, pipX: -125, pipY: -61, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.18 },
+			middle: { tipX: -32, tipY: -236, baseX: 12, baseY: 20, pipX: -18, pipY: -108, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.2 },
+			ring: { tipX: 98, tipY: -213, baseX: 95, baseY: 42, pipX: 105, pipY: -84, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.2 },
+			pinky: { tipX: 236, tipY: -105, baseX: 162, baseY: 110, pipX: 212, pipY: 6, rectWidth: 87, rectBezOrCircle: 0, rectOrBez: 0.3 },
 		},
-		refSize: 855.96,
+		refSize: 855,
 	},
 };
 
@@ -321,7 +322,8 @@ function renderFinger(
 
 		const visPortion = 1.0 - (rbc / 0.3) * 0.3;
 
-		ctx.lineCap = 'butt';
+		// Soft-rounded skin: pill finger ends (the first-generation skin used butt caps).
+		ctx.lineCap = 'round';
 		ctx.lineWidth = rectWidth;
 		ctx.beginPath();
 		if (visPortion < 1.0) {
@@ -514,11 +516,11 @@ export function createHand(opts: { size: number; accent?: string }): HandHandle 
 }
 
 // ---------------------------------------------------------------------------
-// Static open-pose glyph (FAB) — the same five strokes as the `open` pose,
-// pre-baked to SVG lines (all fingers are straight butt-capped strokes there,
-// so the whole pose reduces to five <line>s; same reduction era-maker uses
-// for its FAB icon). Drawn in currentColor with an opacity ramp so it works
-// on the FAB's ink background without introducing any palette.
+// Static open-pose glyph (FAB) — the soft-rounded `open` pose reduced to five
+// straight SVG lines (the pose's subtle bezier bows are invisible at glyph
+// sizes). Round caps match the canvas renderer. Drawn in currentColor with an
+// opacity ramp so it works on the FAB's ink background without introducing
+// any palette.
 // ---------------------------------------------------------------------------
 
 export function handGlyphSvg(width: number, height: number): string {
@@ -526,13 +528,13 @@ export function handGlyphSvg(width: number, height: number): string {
 	return (
 		`<svg class="handyman-hand-glyph" viewBox="-297 -264 595 625" width="${w(width)}" height="${w(height)}" ` +
 		'aria-hidden="true" focusable="false" fill="none" stroke="currentColor" ' +
-		'stroke-width="115.769" stroke-linecap="butt">' +
+		'stroke-width="87" stroke-linecap="round">' +
 		'<g transform="scale(-1 1)">' +
-		'<line opacity="0.95" x1="-62.614" y1="302.668" x2="-238.854" y2="152.503"/>' +
-		'<line opacity="1" x1="-58.299" y1="53.64" x2="-169.76" y2="-149.304"/>' +
-		'<line opacity="0.95" x1="19.092" y1="15.25" x2="-49.209" y2="-205.985"/>' +
-		'<line opacity="0.85" x1="100.978" y1="38.951" x2="76.116" y2="-191.248"/>' +
-		'<line opacity="0.75" x1="173.022" y1="106.083" x2="209.528" y2="-122.559"/>' +
+		'<line opacity="0.95" x1="-58" y1="285" x2="-248" y2="128"/>' +
+		'<line opacity="1" x1="-64" y1="56" x2="-160" y2="-190"/>' +
+		'<line opacity="0.95" x1="12" y1="20" x2="-32" y2="-236"/>' +
+		'<line opacity="0.85" x1="95" y1="42" x2="80" y2="-212"/>' +
+		'<line opacity="0.75" x1="162" y1="110" x2="212" y2="-110"/>' +
 		'</g></svg>'
 	);
 }

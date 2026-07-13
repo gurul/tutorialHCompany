@@ -1,0 +1,144 @@
+<!doctype html>
+<!-- Hand-style preview harness. Renders candidate pose-data files with a
+     faithful port of the widget's finger renderer (packages/core/src/hand.ts)
+     so what you see is what the engine would draw.
+     Usage: preview.html?files=name1,name2,...  (loads <name>.js siblings,
+     each of which calls window.STYLES.push({...})). -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>hand styles</title>
+<style>
+  body { margin: 0; background: #f7f7f9; font-family: system-ui, sans-serif; color: #16161a; }
+  .grid { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; }
+  .card { background: #fff; border: 1px solid rgba(22,22,26,0.1); border-radius: 16px; padding: 20px 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.07); }
+  .card h2 { margin: 0 0 2px; font-size: 20px; }
+  .card p { margin: 0 0 10px; font-size: 13px; color: rgba(22,22,26,0.6); max-width: 640px; }
+  .poses { display: flex; gap: 16px; }
+  .pose { text-align: center; }
+  .pose span { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(22,22,26,0.4); }
+  canvas { display: block; background: #fff; }
+  .dark canvas { background: #16161a; border-radius: 10px; }
+</style>
+</head>
+<body>
+<div class="grid" id="grid"></div>
+<script>
+window.STYLES = [];
+const TINTS = { palm: '#98a1ff', thumb: '#6572ff', index: '#4353ff', middle: '#838dff', ring: '#a1a9ff', pinky: '#bbc1ff' };
+const ORDER = ['palm', 'thumb', 'index', 'middle', 'ring', 'pinky'];
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+
+// Faithful port of renderFinger from packages/core/src/hand.ts.
+function renderFinger(ctx, p, color, scale, lineCap) {
+  const tipX = p.tipX * scale, tipY = p.tipY * scale;
+  const baseX = p.baseX * scale, baseY = p.baseY * scale;
+  const pipX = (p.pipX ?? (p.baseX + p.tipX) / 2) * scale;
+  const pipY = (p.pipY ?? (p.baseY + p.tipY) / 2) * scale;
+  const rectWidth = p.rectWidth * scale;
+  const rbc = p.rectBezOrCircle ?? 0, rob = p.rectOrBez ?? 0;
+  const len = dist(baseX, baseY, tipX, tipY);
+  const angle = Math.atan2(tipY - baseY, tipX - baseX);
+  ctx.fillStyle = color; ctx.strokeStyle = color;
+
+  if (rbc >= 0.5) {
+    const fullDiam = rectWidth * 1.28, fullR = fullDiam / 2, tp = (rbc - 0.5) * 2;
+    const br = fullR / 2 + (fullR / 2) * tp;
+    const edge = rectWidth + (fullDiam - rectWidth) * tp;
+    const cx = lerp((baseX + tipX) / 2, tipX, tp), cy = lerp((baseY + tipY) / 2, tipY, tp);
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle);
+    ctx.beginPath(); ctx.roundRect(-edge / 2, -edge / 2, edge, edge, Math.max(0, Math.min(br, edge / 2)));
+    ctx.fill(); ctx.restore();
+  } else if (rbc >= 0.3) {
+    const fullR = (rectWidth * 1.28) / 2, tp = (rbc - 0.3) / 0.2;
+    const vis = len * 0.7 - (len * 0.7 - rectWidth) * tp;
+    const br = Math.max(0, (fullR / 2) * tp);
+    const vsd = len - vis;
+    const vsx = baseX + (tipX - baseX) * (vsd / len), vsy = baseY + (tipY - baseY) * (vsd / len);
+    ctx.save(); ctx.translate((vsx + tipX) / 2, (vsy + tipY) / 2); ctx.rotate(angle);
+    ctx.beginPath(); ctx.roundRect(-vis / 2, -rectWidth / 2, vis, rectWidth, Math.min(br, rectWidth / 2));
+    ctx.fill(); ctx.restore();
+  } else {
+    const DEG30 = Math.PI / 6;
+    const raw1x = baseX + (pipX - baseX) * 0.7, raw1y = baseY + (pipY - baseY) * 0.7;
+    const raw2x = tipX + (pipX - tipX) * 0.6, raw2y = tipY + (pipY - tipY) * 0.6;
+    const cp1 = { x: raw1x, y: raw1y }, cp2 = { x: raw2x, y: raw2y };
+    if (len > 0.001) {
+      const nx = (tipX - baseX) / len, ny = (tipY - baseY) / len, px = -ny, py = nx;
+      const v1x = raw1x - baseX, v1y = raw1y - baseY, v1L = Math.hypot(v1x, v1y);
+      if (v1L > 0.001) {
+        let a1 = Math.atan2(v1y, v1x) + (v1x * px + v1y * py >= 0 ? 1 : -1) * DEG30;
+        cp1.x = baseX + Math.cos(a1) * v1L; cp1.y = baseY + Math.sin(a1) * v1L;
+      }
+      const v2x = raw2x - tipX, v2y = raw2y - tipY, v2L = Math.hypot(v2x, v2y);
+      if (v2L > 0.001) {
+        let a2 = Math.atan2(v2y, v2x) + (v2x * px + v2y * py >= 0 ? -1 : 1) * DEG30;
+        cp2.x = tipX + Math.cos(a2) * v2L; cp2.y = tipY + Math.sin(a2) * v2L;
+      }
+    }
+    const s1x = baseX + (tipX - baseX) / 3, s1y = baseY + (tipY - baseY) / 3;
+    const s2x = baseX + (tipX - baseX) * 2 / 3, s2y = baseY + (tipY - baseY) * 2 / 3;
+    let c1x = lerp(s1x, cp1.x, rob), c1y = lerp(s1y, cp1.y, rob);
+    let c2x = lerp(s2x, cp2.x, rob), c2y = lerp(s2y, cp2.y, rob);
+    const sf = Math.min(1, rbc / 0.3);
+    c1x += (s1x - c1x) * sf; c1y += (s1y - c1y) * sf;
+    c2x += (s2x - c2x) * sf; c2y += (s2y - c2y) * sf;
+    c1x += (s1x - c1x) * sf; c1y += (s1y - c1y) * sf;
+    c2x += (s2x - c2x) * sf; c2y += (s2y - c2y) * sf;
+    ctx.lineCap = lineCap; ctx.lineWidth = rectWidth;
+    ctx.beginPath(); ctx.moveTo(baseX, baseY);
+    ctx.bezierCurveTo(c1x, c1y, c2x, c2y, tipX, tipY); ctx.stroke();
+  }
+}
+
+function drawPose(canvas, pose, style, palette) {
+  const size = 300, dpr = 2;
+  canvas.width = size * dpr; canvas.height = size * dpr;
+  canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.translate(size, 0); ctx.scale(-1, 1); ctx.translate(size / 2, size / 2);
+  const scale = size / (pose.refSize || 850);
+  for (const f of ORDER) {
+    const params = pose.fingers[f];
+    if (!params) continue;
+    const color = palette === 'paper' ? '#ffffff' : TINTS[f];
+    renderFinger(ctx, params, color, scale, style.lineCap || 'butt');
+  }
+}
+
+const files = new URLSearchParams(location.search).get('files');
+if (files) {
+  for (const f of files.split(',')) document.write(`<script src="${f}.js"><\/script>`);
+}
+window.addEventListener('load', () => {
+  const grid = document.getElementById('grid');
+  for (const s of window.STYLES) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<h2>${s.name}</h2><p>${s.blurb || ''}</p>`;
+    const poses = document.createElement('div');
+    poses.className = 'poses';
+    for (const [label, pose, cls, palette] of [
+      ['open', s.poses.open, '', 'tints'],
+      ['pointer', s.poses.pointer, '', 'tints'],
+      ['open · on ink', s.poses.open, 'dark', 'paper'],
+    ]) {
+      const wrap = document.createElement('div');
+      wrap.className = 'pose ' + cls;
+      const c = document.createElement('canvas');
+      drawPose(c, pose, s, palette);
+      wrap.appendChild(c);
+      const l = document.createElement('span'); l.textContent = label;
+      wrap.appendChild(l);
+      poses.appendChild(wrap);
+    }
+    card.appendChild(poses);
+    grid.appendChild(card);
+  }
+});
+</script>
+</body>
+</html>

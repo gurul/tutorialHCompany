@@ -126,6 +126,8 @@ Widget options, passed to `Handyman.init(config)`:
 | `server` | Key-holding proxy: `/api/step` (Holo3), `/api/voice-token` (Gradium) |
 | `server/scout` | Multi-agent site scout (hai-agents SDK) |
 | `apps/extension` | Chrome extension: runs the widget anywhere, bridges capture, network, and voice past page CSP |
+| `apps/video` | Remotion launch film (~88 s, 8 scenes, real demo footage) — see its README |
+| `assets` | Brand assets: the hand as SVG and transparent/white PNGs |
 
 ## Built with
 

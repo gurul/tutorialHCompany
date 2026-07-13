@@ -1,0 +1,25 @@
+{
+	"name": "@handyman/video",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"studio": "remotion studio",
+		"render": "remotion render HandymanLaunch out/handyman-launch.mp4",
+		"still": "remotion still HandymanLaunch"
+	},
+	"dependencies": {
+		"@remotion/cli": "4.0.489",
+		"@remotion/google-fonts": "4.0.489",
+		"@remotion/shapes": "4.0.489",
+		"@remotion/transitions": "4.0.489",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"remotion": "4.0.489",
+		"zod": "4.3.6"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"typescript": "^5.6.0"
+	}
+}

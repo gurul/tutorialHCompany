@@ -1,8 +1,8 @@
+# Handyman (2nd Place @ NVIDA x Accel x HComputer x Gradium x AWS Computer Use Agent Hack)
+
 <p align="center">
   <img src="assets/handyman.png" alt="Handyman: every website should teach itself" width="100%">
 </p>
-
-# Handyman
 
 **Every website should teach itself.** A guided tour for any site, with zero authored steps.
 

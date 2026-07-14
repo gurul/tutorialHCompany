@@ -1,4 +1,4 @@
-# Handyman (2nd Place @ NVIDIA x Accel x HCompany x Gradium x AWS Computer Use Agent Hack)
+# Handyman (2nd Place @ NVIDIA x Accel x H Company x Gradium x AWS Computer Use Agent Hack)
 
 <p align="center">
   <img src="assets/handyman.png" alt="Handyman: every website should teach itself" width="100%">

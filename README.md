@@ -14,6 +14,14 @@ Software changes constantly and the help never keeps up. Docs, screenshots, and 
 
 Built for the **Computer Use Agents Hackathon 2026** (48 Hours, 120 Builders).
 
+<p align="center">
+  <img src="assets/2nd-place.jpg" alt="The Handyman team accepting the 2nd place prize at the Computer Use Agent Hack, San Francisco" width="100%">
+</p>
+
+<p align="center">
+  <i>2nd place at the Computer Use Agent Hack — San Francisco, July 12, 2026</i>
+</p>
+
 ## What Handyman does
 
 1. **Take a question** in plain language, typed or spoken aloud (`Alt+H`).
